@@ -234,7 +234,8 @@ def register_user(request):
                 email=form.cleaned_data['email'],
                 password=form.cleaned_data['password']
             )
-            login(request, user)
+            UserProfile.objects.get_or_create(user=user)
+            login(request, user, backend='django.contrib.auth.backends.ModelBackend')
             return redirect('dashboard')
         else:
             errors = " | ".join([f"{e[0]}" for e in form.errors.values()])
@@ -253,7 +254,7 @@ def login_user(request):
         password = data.get('password')
         user = authenticate(request, username=username, password=password)
         if user is not None:
-            login(request, user)
+            login(request, user, backend='django.contrib.auth.backends.ModelBackend')
             next_url = request.POST.get('next', 'dashboard')
             return redirect(next_url)
         else:
