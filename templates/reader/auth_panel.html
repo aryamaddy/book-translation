@@ -336,7 +336,7 @@
 
 
         <!-- Google Auth -->
-        <form action="{% provider_login_url 'google' %}" method="post">
+        <form action="{% url 'google_login' %}" method="post">
             {% csrf_token %}
             <button type="submit" class="btn-google">Continue with Google</button>
         </form>
