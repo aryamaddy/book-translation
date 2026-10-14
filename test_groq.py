@@ -15,11 +15,11 @@ prompt = (
 )
 
 completion = client.chat.completions.create(
-    model="llama-3.3-70b-versatile",
+    model=os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b"),
     messages=[
         {"role": "system", "content": prompt},
         {"role": "user", "content": bad_text}
     ],
     temperature=0.1
 )
-print(completion.choices[0].message.content.strip())
+print("Groq Result:", ascii(completion.choices[0].message.content.strip()))

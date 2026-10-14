@@ -25,15 +25,25 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.environ.get('DEBUG', 'False').lower() == 'true'
+DEBUG = os.environ.get('DEBUG', 'True').lower() == 'true'
 
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-dummy-key-for-dev-only-do-not-use-in-prod')
 if not os.environ.get('SECRET_KEY') and not DEBUG:
     raise ValueError("SECRET_KEY must be set in production")
 
-ALLOWED_HOSTS = ['book-translation.onrender.com', '127.0.0.1', 'localhost']
-CSRF_TRUSTED_ORIGINS = ['https://book-translation.onrender.com']
+if DEBUG:
+    ALLOWED_HOSTS = ['*']
+else:
+    ALLOWED_HOSTS = [h.strip() for h in os.environ.get('ALLOWED_HOSTS', 'book-translation.onrender.com,127.0.0.1,localhost,testserver').split(',') if h.strip()]
+
+CSRF_TRUSTED_ORIGINS = [
+    'https://book-translation.onrender.com',
+    'http://127.0.0.1:8000',
+    'http://localhost:8000',
+    'http://127.0.0.1:8001',
+    'http://localhost:8001',
+]
 
 # Application definition
 
@@ -44,6 +54,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'django.contrib.sites',
     'reader',
     
     # allauth
@@ -132,7 +143,7 @@ USE_TZ = True
 STATIC_URL = 'static/'
 STATICFILES_DIRS = [BASE_DIR / 'static']
 STATIC_ROOT = BASE_DIR / 'staticfiles'
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedStaticFilesStorage'
 
 # Media files (Uploaded PDFs)
 MEDIA_URL = 'media/'
@@ -167,11 +178,14 @@ SOCIALACCOUNT_PROVIDERS = {
     }
 }
 
-SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-ACCOUNT_DEFAULT_HTTP_PROTOCOL = 'https'
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    ACCOUNT_DEFAULT_HTTP_PROTOCOL = 'https'
+else:
+    ACCOUNT_DEFAULT_HTTP_PROTOCOL = 'http'
 
 # Robust Allauth settings
-ACCOUNT_EMAIL_REQUIRED = True
+ACCOUNT_SIGNUP_FIELDS = ['email*', 'username*', 'password1*', 'password2*']
 ACCOUNT_EMAIL_VERIFICATION = 'none'
 SOCIALACCOUNT_EMAIL_AUTHENTICATION = True
 SOCIALACCOUNT_EMAIL_AUTHENTICATION_AUTO_CONNECT = True

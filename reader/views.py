@@ -15,16 +15,18 @@ from django_ratelimit.decorators import ratelimit
 from .hinglish_engine import translate_to_natural_hinglish
 from gtts import gTTS
 from io import BytesIO
-import google.generativeai as genai
+
+load_dotenv()
 
 # g4f for free AI Fallback
-from g4f.client import Client as G4FClient
-
-# Load environment variables from .env file
-load_dotenv()
+try:
+    from g4f.client import Client as G4FClient
+except ImportError:
+    G4FClient = None
 
 # ── Groq Config (for premium Hinglish) ──
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b")
 GROQ_AVAILABLE = bool(GROQ_API_KEY)
 
 if GROQ_AVAILABLE:
@@ -315,7 +317,6 @@ def _clean_hindi_ocr(text):
     text = re.sub(r'  +', ' ', text)
     
     # 6. Fix common character substitution errors from PDF encoding
-    #    These are specific patterns seen in corrupted Godan/Premchand PDFs
     common_fixes = {
         'लेककन': 'लेकिन',
         'नजसे': 'जिसे', 
@@ -330,6 +331,31 @@ def _clean_hindi_ocr(text):
         'लड़ककय': 'लड़कीय',
         'ककया': 'किया',
         'ककस': 'किस',
+        'नसकोड': 'सिकोड़',
+        'चचता': 'चिंता',
+        'मानलक': 'मालिक',
+        'पजा': 'पूजा',
+        'कववानहत': 'विवाहित',
+        'कतर - ब्योंत': 'कतर-ब्योंत',
+        'मुकश्कल': 'मुश्किल',
+        'कवषय': 'विषय',
+        'नजंदा': 'ज़िंदा',
+        'लड़ककयाँ': 'लड़कियाँ',
+        'नबला': 'मिला',
+        'नबलें': 'मिलें',
+        'नचरस्थायी': 'चिरस्थायी',
+        'रोदटयाँ': 'रोटियाँ',
+        'पररक्स्र्स्थनत': 'परिस्थिति',
+        'कवद्रोह': 'विद्रोह',
+        'झुर्ररयों': 'झुर्रियों',
+        'झुर्ररयाँ': 'झुर्रियाँ',
+        'स्त्र ी': 'स्त्री',
+        'हु ए': 'हुए',
+        'ददन': 'दिन',
+        'ककधर': 'किधर',
+        'कुसल': 'कुशल',
+        'परसाद': 'प्रसाद',
+        'असनान': 'अस्नान',
     }
     for wrong, right in common_fixes.items():
         text = text.replace(wrong, right)
@@ -347,15 +373,22 @@ def _translate_conversational_hindi(text):
         try:
             client = Groq(api_key=GROQ_API_KEY)
             system_prompt = (
-                "You are an expert Hindi proofreader and editor. The user will provide text extracted from a Hindi PDF that contains severe OCR and extraction errors. "
-                "Your ONLY job is to heavily edit and fix all broken words, wrong matras, weird spacing, and jumbled characters (e.g., 'ल ूँगा' -> 'लूँगा', 'लेककन' -> 'लेकिन', 'क् या' -> 'क्या', 'स्त्र ी' -> 'स्त्री'). "
-                "Reconstruct the text so it is 100% perfectly readable and grammatically flawless Hindi.\n"
-                "If the input text is in English, translate it to natural, conversational Hindi, keeping common English words (like Energy, System) in Devanagari.\n"
-                "DO NOT output any conversational padding or notes. ONLY output the final corrected/translated text."
+                "You are a master Hindi literary editor, proofreader, and scholar. "
+                "The user provides text extracted from a Hindi PDF that suffers from severe font encoding and OCR corruption "
+                "(e.g., KrutiDev/broken Devanagari mappings where 'धनिया' became 'धननया', 'सिकोड़' became 'नसकोड', 'चिंता' became 'चचता', 'मालिक' became 'मानलक', 'पूजा' became 'पजा', 'विवाहित' became 'कववानहत', broken halants, detached matras, or missing characters). "
+                "Or if the input text is in English, translate it to rich, natural, authentic Hindi. "
+                "\nYOUR TASK:\n"
+                "Completely reconstruct and polish the text into 100% flawless, authentic, and grammatically correct literary Hindi IN DEVANAGARI SCRIPT (हिंदी). "
+                "Fix all character substitutions, broken matras, incorrect names, and OCR mistakes so it matches the author's original intended masterpiece (e.g., Premchand's Godan). "
+                "\nCRITICAL RULES:\n"
+                "1. Fix all names and words accurately (e.g., 'धनिया', 'सिकोड़कर', 'मालिक', 'चिंता', 'बैलों', 'कतर-ब्योंत', 'मुश्किल').\n"
+                "2. Maintain original literary cadence, idioms, and dialogue formatting.\n"
+                "3. Output STRICTLY in Devanagari script (हिंदी). Do NOT output Hinglish or Latin characters.\n"
+                "4. Output ONLY the clean Hindi text without any explanations, notes, or markdown fences."
             )
             
             try:
-                model_name = "qwen/qwen3.8-27b"
+                model_name = GROQ_MODEL
                 completion = client.chat.completions.create(
                     model=model_name,
                     messages=[
@@ -365,46 +398,48 @@ def _translate_conversational_hindi(text):
                     temperature=0.1
                 )
             except Exception as e:
-                if 'does not exist' in str(e).lower() or '404' in str(e):
-                    # Fallback to alternative model if llama is unavailable
-                    model_name = "qwen/qwen3.8-27b"
-                    completion = client.chat.completions.create(
-                        model=model_name,
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": text}
-                        ],
-                        temperature=0.1
-                    )
-                else:
-                    raise e
+                # Fallback to 8b if 70b has issues or rate limit
+                model_name = "allam-2-7b"
+                completion = client.chat.completions.create(
+                    model=model_name,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": text}
+                    ],
+                    temperature=0.1
+                )
                     
-            return completion.choices[0].message.content.strip()
+            result = completion.choices[0].message.content.strip()
+            if result.startswith('```') and result.endswith('```'):
+                lines = result.split('\n')
+                result = '\n'.join(lines[1:-1]).strip()
+            return result
         except Exception as e:
             print("Groq translation failed:", e)
 
-    # Fallback to free AI
-    try:
-        g4f_client = G4FClient()
-        system_prompt = (
-            "You are an expert Hindi translator and editor. The user will provide text extracted from a PDF. "
-            "Your ONLY job is to output perfectly readable and grammatically flawless Hindi IN DEVANAGARI SCRIPT (हिंदी). "
-            "If the input text is in English, translate it to natural, conversational Hindi written STRICTLY in Devanagari script. "
-            "DO NOT use Latin/English letters for the Hindi translation. DO NOT output Hinglish. "
-            "DO NOT output any conversational padding or notes. ONLY output the final translated text."
-        )
-        completion = g4f_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": text}
-            ]
-        )
-        result = completion.choices[0].message.content.strip()
-        if result and len(result) > 10:
-            return result
-    except Exception as e:
-        print("g4f Hindi translation failed:", e)
+    # Fallback to free AI if available
+    if G4FClient:
+        try:
+            g4f_client = G4FClient()
+            system_prompt = (
+                "You are an expert Hindi translator and editor. The user will provide text extracted from a PDF. "
+                "Your ONLY job is to output perfectly readable and grammatically flawless Hindi IN DEVANAGARI SCRIPT (हिंदी). "
+                "If the input text is in English, translate it to natural, conversational Hindi written STRICTLY in Devanagari script. "
+                "DO NOT use Latin/English letters for the Hindi translation. DO NOT output Hinglish. "
+                "DO NOT output any conversational padding or notes. ONLY output the final translated text."
+            )
+            completion = g4f_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": text}
+                ]
+            )
+            result = completion.choices[0].message.content.strip()
+            if result and len(result) > 10:
+                return result
+        except Exception as e:
+            print("g4f Hindi translation failed:", e)
 
     # Ultimate fallback: use Google Translator
     try:
@@ -413,53 +448,79 @@ def _translate_conversational_hindi(text):
         return text
 
 def _translate_chunks_hindi(text):
-    """Translate English text to Hindi (Devanagari) using deep-translator."""
-    translator = GoogleTranslator(source='auto', target='hi')
-    chunks = [text[i:i + 4500] for i in range(0, len(text), 4500)]
-    result = ""
-    for chunk in chunks:
-        translated = translator.translate(chunk)
-        if translated:
-            result += translated + " "
-    return result.strip()
+    """Translate English text to Hindi (Devanagari) using Google or MyMemory fallback."""
+    try:
+        translator = GoogleTranslator(source='auto', target='hi')
+        chunks = [text[i:i + 4500] for i in range(0, len(text), 4500)]
+        result = ""
+        for chunk in chunks:
+            translated = translator.translate(chunk)
+            if translated:
+                result += translated + " "
+        if result.strip():
+            return result.strip()
+    except Exception as e:
+        print("GoogleTranslator failed, trying MyMemory fallback:", e)
+
+    try:
+        from deep_translator import MyMemoryTranslator
+        translator = MyMemoryTranslator(source='en-US', target='hi-IN')
+        chunks = [text[i:i + 500] for i in range(0, len(text), 500)]
+        result = ""
+        for chunk in chunks:
+            translated = translator.translate(chunk)
+            if translated:
+                result += translated + " "
+        if result.strip():
+            return result.strip()
+    except Exception as e:
+        print("MyMemory fallback failed:", e)
+
+    return text
 
 
 def _translate_chunks_english(text):
-    """Translate text to English using free AI (g4f) or deep-translator."""
+    """Translate text to English using Groq or deep-translator."""
+    text = _clean_hindi_ocr(text)
     prompt = (
-        "You are an expert translator. The user will provide text that might be broken Hindi (OCR errors) or Hinglish. "
-        "Please translate it into highly readable, fluent, and conversational English. "
-        "If the input is broken, guess the intended meaning and provide the correct English translation. "
-        "Do not add any notes, just output the English text."
+        "You are an expert literary translator specializing in Indian literature (e.g., Premchand's Godan). "
+        "The user will provide text extracted from a Hindi PDF which may contain font/OCR errors. "
+        "Reconstruct the intended meaning, fix character names (Hori, Dhaniya, Gobar), and translate into eloquent, fluent, natural English suitable for published literature. "
+        "Do NOT add any notes, explanations, or quotes. Output ONLY the English text."
     )
     
     if GROQ_AVAILABLE:
         try:
             client = Groq(api_key=GROQ_API_KEY)
             completion = client.chat.completions.create(
-                model="qwen/qwen3.8-27b",
+                model=GROQ_MODEL,
                 messages=[
                     {"role": "system", "content": prompt},
                     {"role": "user", "content": text}
                 ],
-                temperature=0.1
+                temperature=0.2
             )
-            return completion.choices[0].message.content.strip()
+            result = completion.choices[0].message.content.strip()
+            if result.startswith('```') and result.endswith('```'):
+                lines = result.split('\n')
+                result = '\n'.join(lines[1:-1]).strip()
+            return result
         except Exception as e:
             print("Groq English translation failed:", e)
             
-    # Try free AI first
-    try:
-        g4f_client = G4FClient()
-        completion = g4f_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt + "\n\nText:\n" + text}]
-        )
-        result = completion.choices[0].message.content.strip()
-        if result and len(result) > 10:
-            return result
-    except Exception as e:
-        print("g4f English translation failed:", e)
+    # Try free AI first if available
+    if G4FClient:
+        try:
+            g4f_client = G4FClient()
+            completion = g4f_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt + "\n\nText:\n" + text}]
+            )
+            result = completion.choices[0].message.content.strip()
+            if result and len(result) > 10:
+                return result
+        except Exception as e:
+            print("g4f English translation failed:", e)
 
     # Fallback to Google Translate
     translator = GoogleTranslator(source='auto', target='en')
@@ -474,26 +535,54 @@ def _translate_chunks_english(text):
 
 def _translate_to_hinglish(english_text):
     """
-    Translate text to conversational Hinglish (romanized Hindi) using free AI (g4f)
-    or fallback to Google Translate.
+    Translate text to natural, accurate conversational Hinglish (romanized Hindi)
+    using Groq with specialized literary OCR restoration, or rule engine fallback.
     """
+    cleaned_text = _clean_hindi_ocr(english_text)
+
     prompt = (
-        "You are a native Indian speaker. Translate or rewrite the following text into simple, easy-to-read 'Hinglish' (Hindi written in English alphabet). "
-        "Make it highly conversational, exactly how young Indians text on WhatsApp (e.g., use 'kya', 'hai', 'main', 'kyun'). "
-        "If the input is broken Hindi, figure out the meaning and rewrite it properly in Hinglish. "
-        "DO NOT use pure English. DO NOT use Devanagari script. DO NOT add any notes, explanations, or quotes. Output ONLY the Hinglish text."
+        "You are an expert Indian literary editor and translator specializing in Hindi literature (Premchand's Godan, etc.). "
+        "The user will provide text extracted from a book (which may be a Hindi book with font encoding/OCR errors, or English). "
+        "If the input is from a Hindi book with OCR errors (e.g. 'धननया' -> 'धनिया/Dhaniya', 'नसकोड' -> 'सिकोड़/sikod', 'मानलक' -> 'मालिक/maalik', 'दोनों बैलों' -> 'bailon', 'कतर-ब्योंत' -> 'katar-byont'): "
+        "Intelligently recognize the correct literary context and character names. "
+        "Translate/transliterate it into natural, fluent, and highly accurate HINGLISH (conversational Hindi written in English/Latin script). "
+        "\nCRITICAL RULES:\n"
+        "1. Fix character names and terms accurately (e.g. use 'Dhaniya' NOT 'Dhanmaya'; 'bailon' NOT 'bagon'; 'maalik' NOT 'maanik'; 'sikod kar' NOT 'nas koord'; 'taang adaati' NOT 'tounge'; 'milte-julte' NOT 'namlate-julate').\n"
+        "2. Keep the natural Indian storytelling tone, emotions, and dialogue style.\n"
+        "3. Use standard, conversational Romanized Hindi spellings (e.g. 'nahi', 'apni', 'chinta', 'kaha', 'main', 'kyun').\n"
+        "4. STRICTLY output in Roman/Latin script (Hinglish). Do NOT output Devanagari script. Do NOT output pure English.\n"
+        "5. Output ONLY the clean Hinglish text, without any quotes, notes, or preamble."
     )
     
     if GROQ_AVAILABLE:
         try:
             client = Groq(api_key=GROQ_API_KEY)
             completion = client.chat.completions.create(
-                model="qwen/qwen3.8-27b",
+                model=GROQ_MODEL,
                 messages=[
                     {"role": "system", "content": prompt},
-                    {"role": "user", "content": english_text}
+                    {"role": "user", "content": cleaned_text}
                 ],
-                temperature=0.1
+                temperature=0.2
+            )
+            result = completion.choices[0].message.content.strip()
+            if result and len(result) > 10:
+                if result.startswith('```') and result.endswith('```'):
+                    lines = result.split('\n')
+                    result = '\n'.join(lines[1:-1]).strip()
+                if result.startswith('"') and result.endswith('"'):
+                    result = result[1:-1]
+                return result
+        except Exception as e:
+            print("Groq Hinglish failed:", e)
+
+    # Try free AI if available
+    if G4FClient:
+        try:
+            g4f_client = G4FClient()
+            completion = g4f_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt + "\n\nText:\n" + english_text}]
             )
             result = completion.choices[0].message.content.strip()
             if result and len(result) > 10:
@@ -501,25 +590,15 @@ def _translate_to_hinglish(english_text):
                     result = result[1:-1]
                 return result
         except Exception as e:
-            print("Groq Hinglish failed:", e)
+            print("g4f Hinglish failed:", e)
 
-    # Try free AI first for natural conversational Hinglish
+    # High quality offline fallback: Natural Hinglish Engine
     try:
-        g4f_client = G4FClient()
-        completion = g4f_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt + "\n\nText:\n" + english_text}]
-        )
-        result = completion.choices[0].message.content.strip()
-        
-        # Sometime g4f fails to return anything, check length
-        if result and len(result) > 10:
-            # Remove any surrounding quotes
-            if result.startswith('"') and result.endswith('"'):
-                result = result[1:-1]
-            return result
+        natural_hinglish = translate_to_natural_hinglish(english_text)
+        if natural_hinglish and len(natural_hinglish.strip()) > 0:
+            return natural_hinglish
     except Exception as e:
-        print("g4f Hinglish failed:", e)
+        print("Natural Hinglish engine failed:", e)
 
     # Fallback: English -> Hindi -> Romanized Google Translate
     hindi_text = _translate_conversational_hindi(english_text)
@@ -583,7 +662,7 @@ def translate_page(request):
                 return JsonResponse({'error': 'Missing required fields'}, status=400)
                 
             if not english_text:
-                return JsonResponse({'hindi_text': '', 'language': language})
+                return JsonResponse({'page_number': page_number, 'hindi_text': '', 'language': language})
 
             book = get_object_or_404(Book, id=book_id)
 
@@ -594,6 +673,7 @@ def translate_page(request):
                 ).first()
                 if cache_entry:
                     return JsonResponse({
+                        'page_number': page_number,
                         'hindi_text': cache_entry.hindi_text,
                         'summary_text': cache_entry.summary_text or '',
                         'language': language
@@ -626,6 +706,7 @@ def translate_page(request):
             )
 
             return JsonResponse({
+                'page_number': page_number,
                 'hindi_text': translated_text, 
                 'summary_text': "",
                 'language': language
@@ -689,13 +770,13 @@ def ask_book(request):
             
             GROQ_API_KEY = os.getenv('GROQ_API_KEY')
             if not GROQ_API_KEY:
-                return JsonResponse({'error': 'GROQ API key not configured'}, status=500)
+                return JsonResponse({'answer': 'AI Book Chat requires a GROQ_API_KEY configured in your .env file. Add your Groq API key to start chatting.'})
             
             from groq import Groq
             client = Groq(api_key=GROQ_API_KEY)
             
             completion = client.chat.completions.create(
-                model=os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b"),
+                model=os.getenv("GROQ_MODEL", GROQ_MODEL),
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=500,
                 temperature=0.7

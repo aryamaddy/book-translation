@@ -1,145 +1,181 @@
 <div align="center">
 
-# 📖 Anuvad
+# 📖 Anuvad.ai (अनुवाद)
+### *Next-Gen AI Book Translation & Interactive Split-Screen Reader*
 
-### 🌍 AI-Powered Book Translation Platform
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
+[![Django](https://img.shields.io/badge/Django-5.x%20%2F%206.x-092E20?style=for-the-badge&logo=django&logoColor=white)](https://djangoproject.com)
+[![Groq](https://img.shields.io/badge/Groq-LPU%20Inference-F05A28?style=for-the-badge&logo=groq&logoColor=white)](https://groq.com)
+[![PDF.js](https://img.shields.io/badge/PDF.js-Client%20Rendering-FF0000?style=for-the-badge&logo=adobe&logoColor=white)](https://mozilla.github.io/pdf.js/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 
-**Read any book in your own language — instantly.**
-
-*Break language barriers with AI-powered translation while preserving the original meaning, context, and reading experience.*
-
-<p>
-  <a href="https://book-translation.onrender.com">
-    <img src="https://img.shields.io/badge/🌐_Live_Demo-Try_Now-FF6B35?style=for-the-badge" alt="Live Demo">
-  </a>
-  <a href="#-key-features">
-    <img src="https://img.shields.io/badge/✨_Features-Explore-7C3AED?style=for-the-badge" alt="Features">
-  </a>
-  <a href="#-how-it-works">
-    <img src="https://img.shields.io/badge/⚙️_How_It_Works-Guide-0EA5E9?style=for-the-badge" alt="How It Works">
-  </a>
-  <a href="#-quick-start">
-    <img src="https://img.shields.io/badge/🚀_Quick_Start-Get_Started-22C55E?style=for-the-badge" alt="Quick Start">
-  </a>
-</p>
-
-<p>
-  <a href="https://python.org">
-    <img src="https://img.shields.io/badge/Python-3.14-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python">
-  </a>
-  <a href="https://www.djangoproject.com/">
-    <img src="https://img.shields.io/badge/Django-5.x-092E20?style=for-the-badge&logo=django&logoColor=white" alt="Django">
-  </a>
-  <a href="https://groq.com">
-    <img src="https://img.shields.io/badge/Groq-Llama_3-8B5CF6?style=for-the-badge&logo=groq&logoColor=white" alt="Groq Llama 3">
-  </a>
-  <a href="https://book-translation.onrender.com">
-    <img src="https://img.shields.io/badge/Render-Live-46E3B7?style=for-the-badge&logo=render&logoColor=white" alt="Render">
-  </a>
+<p align="center">
+  <b>Read any English or Hindi PDF book side-by-side with context-aware AI translations in Pure Hindi, conversational Hinglish, or English — without losing document layout or reading flow.</b>
 </p>
 
 </div>
 
 ---
 
-> 📚 **Anuvad** enables readers to upload books, translate them into their preferred language using AI, and enjoy a seamless reading experience without language barriers.
-## 🌟 Why Anuvad?
-For millions of readers in India, English literature holds immense value, but the language barrier often prevents deep immersion. Traditional translation apps strip away the formatting, context, and joy of reading a real book. 
+## 🌟 Why Anuvad.ai?
 
-**Anuvad** (अनुवाद) is built to solve this. It's not just a translator; it's a complete, AI-powered reading ecosystem. You upload a standard English PDF, and Anuvad renders it beautifully while providing side-by-side, context-aware translations in **Pure Hindi** or relatable **Hinglish**.
+For millions of bilingual readers, diving into English or classical literature comes with constant linguistic friction. Traditional translation tools strip away formatting, destroy typography, and translate line-by-line out of context.
+
+**Anuvad.ai** provides an intelligent, split-screen reading experience:
+- **Left Pane:** Pixel-perfect original PDF rendered in real-time via `PDF.js`.
+- **Right Pane:** Natural, context-rich translation with instant switching between **Pure Hindi (हिंदी)**, **Conversational Hinglish**, and **English**.
 
 ---
 
 ## ✨ Key Features
 
-### 📚 Smart Translation Engine
-Upload any English PDF and get immediate, context-aware translations mapped page-by-page. Toggle instantly between Pure Hindi or conversational Hinglish to suit your absolute comfort level.
-
-### 🧠 Vocabulary Vault
-Don't break your flow to open a dictionary. Simply tap on any difficult English word while reading to get its contextual meaning. The word is automatically saved to your personal **Vocabulary Vault** for later review.
-
-### 🤖 Chat with Your Book (Ask AI)
-Got a question about a confusing plot point? Need a summary of the current chapter? Use the built-in **Ask Book** feature to chat directly with an AI that understands the exact context of the pages you are reading.
-
-### 🧘 Zen Mode (Distraction-Free)
-Activate Zen Mode to immerse yourself in reading. Features a built-in Pomodoro timer and ambient background audio (Rain, Ocean Waves, Coffee Shop) to keep you perfectly focused.
-
-### ⚡ Lightning Fast Caching
-Translations are intelligently cached in a Supabase PostgreSQL database. Once a page is translated by the AI, it loads instantly forever.
+| Feature | Description |
+|---|---|
+| 📑 **Pixel-Perfect Split View** | Keeps the visual fidelity of the original PDF while rendering readable translated text alongside. |
+| ⚡ **Contextual AI Engine** | Powered by high-throughput **Groq LPU (Llama 3 / Qwen)** for authentic Indian literary cadence and idiom preservation. |
+| 🛡️ **Race-Condition & Skip Defense** | Built with `AbortController` and monotonic request IDs — rapidly flipping through pages never causes stale or overlapping translations. |
+| 🏎️ **Dual-Tier Smart Caching** | Instant client memory cache (`<1ms`) + persistent database cache (`<50ms`) for zero latency on revisited pages. |
+| 🗣️ **Text-to-Speech (TTS)** | Listen to Hindi or English translations hands-free with the integrated web TTS player. |
+| 🤖 **Ask The Book (AI Tutor)** | In-reader AI assistant that directly answers queries about the active page's storyline, characters, and themes. |
+| 📖 **Vocabulary Vault** | Tap any complex word to retrieve its contextual definition and bookmark it for personalized revision. |
+| 🧘 **Zen Focus Mode** | Built-in Pomodoro timer with ambient background audio (Rain, Focus, Forest) for distraction-free reading sessions. |
+| 🔐 **Admin & User Management** | Complete Django admin dashboard for managing books, users, translation caches, and error logs. |
 
 ---
 
-## ⚙️ How it Works
+## 🏗️ Architecture & Data Flow
 
 ```mermaid
-graph TD;
-    A[User Uploads PDF] --> B[Django Backend Extracts Text];
-    B --> C{Is Translation Cached?};
-    C -- Yes --> D[Load from Supabase];
-    C -- No --> E[Groq Llama 3 API translates contextually];
-    E --> F[Save to Supabase Cache];
-    F --> D;
-    D --> G[Render Split-Screen UI];
-    G --> H[User highlights word -> Save to Vocab];
+sequenceDiagram
+    autonumber
+    actor Reader as 👤 User
+    participant Browser as 🖥️ Reader Frontend (PDF.js)
+    participant Cache as 💾 Local Memory & DB Cache
+    participant Django as ⚙️ Django API Server
+    participant Groq as 🚀 Groq LPU (AI Engine)
+
+    Reader->>Browser: Opens Book / Navigates to Page
+    Browser->>Browser: Aborts previous in-flight requests (AbortController)
+    Browser->>Browser: Renders PDF Page Canvas
+    Browser->>Cache: Check Client Memory Cache
+    
+    alt Client Cache Hit
+        Cache-->>Browser: Instant Render (<1ms)
+    else Cache Miss
+        Browser->>Django: POST /api/translate-page/ (page_num, extracted_text, lang)
+        Django->>Cache: Query SQLite/PostgreSQL TranslationCache
+        alt DB Cache Hit
+            Cache-->>Django: Return cached translation
+        else DB Cache Miss
+            Django->>Groq: Generate Contextual Literary Translation
+            Groq-->>Django: Return Hindi / Hinglish Text
+            Django->>Cache: Save into TranslationCache
+        end
+        Django-->>Browser: Return JSON response with page verification
+        Browser->>Browser: Guard check: Does response match current page?
+        Browser-->>Reader: Display translated page & save to client cache
+    end
 ```
 
 ---
 
-## 🛠️ Tech Stack
+## 🛠️ Technology Stack
 
-- **Backend:** Django, Python 3.14
-- **Database:** PostgreSQL (Supabase)
-- **Frontend:** Vanilla JS, Custom CSS (Glassmorphism, Dark Mode)
-- **AI Engine:** Groq API (Llama 3) for blazing-fast inference
-- **Auth:** Django Allauth (Google OAuth integration)
+- **Backend Framework:** Django 5.x / 6.x (Python 3.11+)
+- **AI / LLM Acceleration:** Groq API (High-speed LPU inference with `allam-2-7b` / `qwen` fallbacks)
+- **Frontend & Rendering:** Vanilla JavaScript (ES6+), PDF.js, Modern Brutalist Glassmorphism CSS
+- **Audio & TTS Engine:** Web Speech API & Google Text-to-Speech integration
+- **Database:** SQLite (default for development) / PostgreSQL (production-ready)
+- **Authentication:** Django Auth & Django-Allauth (Google OAuth support)
 
 ---
 
-## 🚀 Quick Start (Local Development)
+## 🚀 Quickstart Guide
 
-Want to run Anuvad locally? Follow these simple steps:
-
-### 1. Clone the repository
+### 1. Clone the Repository
 ```bash
-git clone https://github.com/ajay160380/book-translation.git
+git clone https://github.com/aryamaddy/book-translation.git
 cd book-translation
 ```
 
-### 2. Set up the Environment
+### 2. Set Up Virtual Environment
 ```bash
+# Windows
+python -m venv .venv
+.\.venv\Scripts\activate
+
+# Linux / macOS
 python3 -m venv .venv
 source .venv/bin/activate
+```
+
+### 3. Install Dependencies
+```bash
 pip install -r requirements.txt
 ```
 
-### 3. Configure Environment Variables
-Create a `.env` file in the root directory and add your credentials:
+### 4. Configure Environment Variables
+Create a `.env` file in the project root:
 ```env
-GROQ_API_KEY=your_groq_api_key
-DATABASE_URL=your_postgres_db_url
+# Required for AI Translation
+GROQ_API_KEY=gsk_your_groq_api_key_here
 
-# Optional (For Google Login)
-GOOGLE_CLIENT_ID=your_client_id
-GOOGLE_CLIENT_SECRET=your_client_secret
+# Django Settings (Optional for development)
+DEBUG=True
+SECRET_KEY=your_secret_key_here
+
+# Database (Optional: Defaults to SQLite if omitted)
+# DATABASE_URL=postgresql://user:password@localhost:5432/bookdb
 ```
 
-### 4. Run Migrations & Server
+### 5. Apply Database Migrations
 ```bash
-python manage.py makemigrations
 python manage.py migrate
+```
+
+### 6. Create an Admin User (Optional)
+```bash
+python manage.py createsuperuser
+```
+
+### 7. Run the Application
+```bash
 python manage.py runserver
 ```
-Visit `http://127.0.0.1:8000` in your browser to start reading!
+
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000) in your web browser.
 
 ---
 
-## 🤝 Contributing
-Contributions, issues, and feature requests are welcome! Feel free to check the [issues page](https://github.com/ajay160380/book-translation/issues) if you want to contribute.
+## 📡 API Endpoints Overview
 
-## 📄 License
-This project is [MIT](https://opensource.org/licenses/MIT) licensed.
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/translate-page/` | Translates page text to Hindi, Hinglish, or English with caching |
+| `POST` | `/api/tts/` | Generates streaming audio for translated text |
+| `POST` | `/api/ask-book/` | Context-aware AI tutor chat for the current page |
+| `POST` | `/api/bookmark/` | Saves or toggles bookmark for the active page |
+| `POST` | `/api/progress/` | Updates user reading percentage and resume state |
+| `GET` | `/admin/` | Superuser administration portal for books, users, and logs |
 
-<br/>
+---
+
+## 🧪 Running the Test Suite
+
+Run the end-to-end automated verification suite:
+```bash
+python test_e2e.py
+```
+This tests user creation, authentication, PDF upload, reader rendering, Hindi and Hinglish AI translation, and conversational book queries.
+
+---
+
+## 🛡️ License
+
+This project is licensed under the [MIT License](LICENSE).
+
+---
+
 <div align="center">
-  <i>Built with ❤️ for a language-barrier-free world.</i>
+  <b>Developed & Maintained with ❤️ by <a href="https://github.com/aryamaddy">aryamaddy</a></b>
 </div>

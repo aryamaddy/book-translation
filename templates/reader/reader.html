@@ -807,6 +807,11 @@
         }, { passive: true });
 
         let currentPageText = '';  // Store the extracted text for re-translation on toggle
+        const pageTextMap = {};    // Extracted text cache by page number: { [pageNum]: text }
+        const translationCache = {}; // Client-side translation cache: { `${bookId}_${pageNum}_${language}`: text }
+        let activeTranslationController = null; // AbortController to cancel pending HTTP translation requests
+        let currentTranslationRequestId = 0; // Monotonic request ID counter to discard stale async responses
+        let extractDebounceTimer = null; // Debounce rapid page skipping
 
         let currentAudio = new Audio(); // Global audio instance to prevent Safari autoplay block
 
@@ -947,8 +952,9 @@
             }
 
             // Re-translate or show original text if we have text
-            if (currentPageText && lang !== 'normal') {
-                fetchTranslation(bookId, pageNum, currentPageText, currentLang);
+            const textToUse = pageTextMap[pageNum] || currentPageText;
+            if (textToUse && lang !== 'normal') {
+                fetchTranslation(bookId, pageNum, textToUse, currentLang);
             }
         }
 
@@ -964,7 +970,37 @@
         function renderPage(num) {
             pageIsRendering = true;
 
+            // 1. Immediately abort any in-flight translation request from previous page
+            if (activeTranslationController) {
+                try { activeTranslationController.abort(); } catch(e) {}
+                activeTranslationController = null;
+            }
+            if (extractDebounceTimer) {
+                clearTimeout(extractDebounceTimer);
+                extractDebounceTimer = null;
+            }
+
+            // 2. Set UI immediately for the target page
+            if (currentLang !== 'normal') {
+                const cacheKey = `${bookId}_${num}_${currentLang}`;
+                if (translationCache[cacheKey]) {
+                    // Instant display if cached in client memory
+                    loaderEl.classList.remove('show');
+                    translatedTextEl.textContent = translationCache[cacheKey];
+                    translatedTextEl.style.display = 'block';
+                } else {
+                    translatedTextEl.style.display = 'none';
+                    loaderEl.classList.add('show');
+                }
+            }
+
             pdfDoc.getPage(num).then(page => {
+                // If user skipped past this page while loading, bail out immediately
+                if (num !== pageNum) {
+                    pageIsRendering = false;
+                    return;
+                }
+
                 const viewport = page.getViewport({ scale });
                 canvas.height = viewport.height;
                 canvas.width = viewport.width;
@@ -972,24 +1008,42 @@
                 page.render({ canvasContext: ctx, viewport }).promise.then(() => {
                     pageIsRendering = false;
                     if (pageNumIsPending !== null) {
-                        renderPage(pageNumIsPending);
+                        const nextNum = pageNumIsPending;
                         pageNumIsPending = null;
+                        renderPage(nextNum);
                     }
+                }).catch(err => {
+                    pageIsRendering = false;
                 });
 
                 pageInputEl.value = num;
 
-                // Extract text and translate
-                extractAndTranslate(page, num);
+                // 3. Extract text and translate with debounce for rapid skipping
+                extractDebounceTimer = setTimeout(() => {
+                    if (num === pageNum) {
+                        extractAndTranslate(page, num);
+                    }
+                }, 150);
             });
         }
 
         // ─── Extract Text (Preserving Line Breaks & Removing Watermarks) ───────
         function extractAndTranslate(page, num) {
-            translatedTextEl.style.display = 'none';
-            loaderEl.classList.add('show');
+            if (num !== pageNum) return;
+
+            // If already extracted for this page, use cached text immediately
+            if (pageTextMap[num]) {
+                currentPageText = pageTextMap[num];
+                if (currentLang !== 'normal') {
+                    fetchTranslation(bookId, num, currentPageText, currentLang);
+                }
+                return;
+            }
 
             page.getTextContent().then(textContent => {
+                // Guard: if user navigated away while getTextContent was resolving, abort!
+                if (num !== pageNum) return;
+
                 let englishText = '';
                 let lastY = null;
 
@@ -1025,17 +1079,43 @@
                     return p.replace(urlRegex, '').trim();
                 });
 
-                // Re-join remaining valid paragraphs
-                currentPageText = paragraphs.filter(p => p.length > 0).join('\n\n').trim();
+                const cleanedText = paragraphs.filter(p => p.length > 0).join('\n\n').trim();
+                pageTextMap[num] = cleanedText;
 
-                if (currentLang !== 'normal') {
-                    fetchTranslation(bookId, num, currentPageText, currentLang);
+                // Strict guard before triggering translation
+                if (num === pageNum) {
+                    currentPageText = cleanedText;
+                    if (currentLang !== 'normal') {
+                        fetchTranslation(bookId, num, currentPageText, currentLang);
+                    }
                 }
             });
         }
 
         // ─── Fetch Translation from Backend ──────────────
         function fetchTranslation(bookId, pageNumber, englishText, language, forceRefresh = false) {
+            // Guard: don't request translation if page has already changed
+            if (pageNumber !== pageNum) {
+                return;
+            }
+
+            const cacheKey = `${bookId}_${pageNumber}_${language}`;
+            if (!forceRefresh && translationCache[cacheKey]) {
+                loaderEl.classList.remove('show');
+                translatedTextEl.textContent = translationCache[cacheKey];
+                translatedTextEl.style.display = 'block';
+                return;
+            }
+
+            // Abort previous in-flight translation request
+            if (activeTranslationController) {
+                try { activeTranslationController.abort(); } catch(e) {}
+                activeTranslationController = null;
+            }
+
+            activeTranslationController = new AbortController();
+            const thisReqId = ++currentTranslationRequestId;
+
             translatedTextEl.style.display = 'none';
             loaderEl.classList.add('show');
 
@@ -1051,10 +1131,23 @@
                     english_text: englishText,
                     language: language,
                     force_refresh: forceRefresh
-                })
+                }),
+                signal: activeTranslationController.signal
             })
             .then(res => res.json())
             .then(data => {
+                // RACE CONDITION DEFENSE:
+                // Strictly ignore response if:
+                // 1. A newer translation request was dispatched
+                // 2. The user has navigated to another page
+                // 3. Response page_number doesn't match active pageNum
+                if (thisReqId !== currentTranslationRequestId || pageNumber !== pageNum) {
+                    return;
+                }
+                if (data.page_number && data.page_number !== pageNum) {
+                    return;
+                }
+
                 loaderEl.classList.remove('show');
                 translatedTextEl.style.display = 'block';
 
@@ -1062,31 +1155,45 @@
                     translatedTextEl.innerHTML =
                         '<span class="error-text">Error: ' + data.error + '</span>';
                 } else {
-                    translatedTextEl.textContent = data.hindi_text;
+                    const translatedResult = data.hindi_text || '';
+                    translationCache[cacheKey] = translatedResult;
+                    translatedTextEl.textContent = translatedResult;
                 }
             })
             .catch(err => {
+                // If aborted because user skipped to another page, silently ignore
+                if (err.name === 'AbortError') {
+                    return;
+                }
+                if (thisReqId !== currentTranslationRequestId || pageNumber !== pageNum) {
+                    return;
+                }
                 loaderEl.classList.remove('show');
                 translatedTextEl.style.display = 'block';
                 translatedTextEl.innerHTML =
                     '<span class="error-text">Failed to fetch translation.</span>';
-                console.error(err);
+                console.error('Translation error:', err);
             });
         }
 
         // ─── Refresh Button ──────────────────────────────
         const btnRefresh = document.getElementById('btnRefresh');
         btnRefresh.addEventListener('click', () => {
-            // Force re-extraction and translation without cache
-            const page = pdfDoc.getPage(pageNum).then(p => {
+            const pageToRefresh = pageNum;
+            const cacheKey = `${bookId}_${pageToRefresh}_${currentLang}`;
+            delete translationCache[cacheKey];
+            delete pageTextMap[pageToRefresh];
+
+            pdfDoc.getPage(pageToRefresh).then(p => {
                 p.getTextContent().then(textContent => {
+                    if (pageToRefresh !== pageNum) return;
                     let extractedText = '';
                     let lastY = -1;
                     textContent.items.forEach(item => {
                         const str = item.str.trim();
                         if (str.length === 0) return;
                         if (str.match(/Anuvad\.ai/i)) return;
-                        if (str.match(/^\d+$/) && str === String(pageNum)) return;
+                        if (str.match(/^\d+$/) && str === String(pageToRefresh)) return;
                         if (lastY !== -1 && Math.abs(item.transform[5] - lastY) > 12) {
                             extractedText += '\n';
                         } else if (lastY !== -1) {
@@ -1095,8 +1202,9 @@
                         extractedText += str;
                         lastY = item.transform[5];
                     });
+                    pageTextMap[pageToRefresh] = extractedText;
                     currentPageText = extractedText;
-                    fetchTranslation(bookId, pageNum, currentPageText, currentLang, true);
+                    fetchTranslation(bookId, pageToRefresh, currentPageText, currentLang, true);
                 });
             });
         });
@@ -1104,6 +1212,16 @@
         // ─── Page Navigation ─────────────────────────────
         function queueRenderPage(num) {
             stopSpeech();
+            // Abort pending translation immediately on page change
+            if (activeTranslationController) {
+                try { activeTranslationController.abort(); } catch(e) {}
+                activeTranslationController = null;
+            }
+            if (extractDebounceTimer) {
+                clearTimeout(extractDebounceTimer);
+                extractDebounceTimer = null;
+            }
+
             if (pageIsRendering) {
                 pageNumIsPending = num;
             } else {

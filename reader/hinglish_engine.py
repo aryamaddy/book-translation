@@ -213,7 +213,7 @@ def _extract_keep_phrases(sentence):
 # ══════════════════════════════════════════════════════════════
 
 def _translate_to_hindi(text):
-    """Translate English text to Hindi (Devanagari) using deep-translator."""
+    """Translate English text to Hindi (Devanagari) using deep-translator with fallback."""
     try:
         translator = GoogleTranslator(source='en', target='hi')
         chunks = [text[i:i + 4500] for i in range(0, len(text), 4500)]
@@ -222,9 +222,26 @@ def _translate_to_hindi(text):
             translated = translator.translate(chunk)
             if translated:
                 result += translated + " "
-        return result.strip()
+        if result.strip():
+            return result.strip()
     except Exception:
-        return text
+        pass
+
+    try:
+        from deep_translator import MyMemoryTranslator
+        translator = MyMemoryTranslator(source='en-US', target='hi-IN')
+        chunks = [text[i:i + 500] for i in range(0, len(text), 500)]
+        result = ""
+        for chunk in chunks:
+            translated = translator.translate(chunk)
+            if translated:
+                result += translated + " "
+        if result.strip():
+            return result.strip()
+    except Exception:
+        pass
+
+    return text
 
 
 def _romanize_hindi(hindi_text):
