@@ -909,3 +909,21 @@ def api_manage_tags(request):
         except Exception as e:
             return JsonResponse({'error': str(e)}, status=500)
     return JsonResponse({'error': 'Invalid method'}, status=405)
+
+
+def safe_google_login(request):
+    """
+    Safely handles Google OAuth login. If GOOGLE_CLIENT_ID is not configured,
+    avoids redirecting to Google's broken 'Error 400: invalid_request (Missing client_id)'
+    page, and returns a clean, friendly message directing the user to use
+    Username & Password registration/login.
+    """
+    google_client_id = os.environ.get('GOOGLE_CLIENT_ID', '').strip()
+    if not google_client_id:
+        return render(request, 'reader/landing.html', {
+            'auth_error': 'Google Sign-In is not configured yet (Missing GOOGLE_CLIENT_ID). Please register or log in using Username & Password below.',
+            'auth_action': 'login'
+        })
+    from allauth.socialaccount.providers.google.views import oauth2_login
+    return oauth2_login(request)
+
