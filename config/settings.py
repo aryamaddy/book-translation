@@ -35,9 +35,10 @@ if not os.environ.get('SECRET_KEY') and not DEBUG:
 if DEBUG:
     ALLOWED_HOSTS = ['*']
 else:
-    ALLOWED_HOSTS = [h.strip() for h in os.environ.get('ALLOWED_HOSTS', 'book-translation.onrender.com,127.0.0.1,localhost,testserver').split(',') if h.strip()]
+    ALLOWED_HOSTS = [h.strip() for h in os.environ.get('ALLOWED_HOSTS', '.vercel.app,book-translation.onrender.com,127.0.0.1,localhost,testserver').split(',') if h.strip()]
 
 CSRF_TRUSTED_ORIGINS = [
+    'https://*.vercel.app',
     'https://book-translation.onrender.com',
     'http://127.0.0.1:8000',
     'http://localhost:8000',
@@ -99,9 +100,10 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
+default_db_url = f'sqlite:////tmp/db.sqlite3' if os.environ.get('VERCEL') else f'sqlite:///{BASE_DIR}/db.sqlite3'
 DATABASES = {
     'default': dj_database_url.config(
-        default=os.environ.get('DATABASE_URL', f'sqlite:///{BASE_DIR}/db.sqlite3')
+        default=os.environ.get('DATABASE_URL', default_db_url)
     )
 }
 
