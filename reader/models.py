@@ -19,6 +19,7 @@ class TranslationCache(models.Model):
     LANGUAGE_CHOICES = [
         ('hindi', 'Hindi'),
         ('hinglish', 'Hinglish'),
+        ('english', 'English'),
     ]
     book = models.ForeignKey(Book, on_delete=models.CASCADE, related_name='translations')
     page_number = models.IntegerField()

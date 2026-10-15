@@ -9,6 +9,9 @@ from django.http import JsonResponse, HttpResponse
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
 from deep_translator import GoogleTranslator
+from django.conf import settings
+from django.urls import reverse
+from django.utils.http import url_has_allowed_host_and_scheme
 from .models import Book, TranslationCache, Vocabulary, UserProfile, ErrorLog, ReadingProgress, Bookmark, BookTag, BookTagAssignment
 from .forms import BookForm, UserProfileForm, RegisterForm, PageTranslationForm, AskBookForm, TTSForm
 from django_ratelimit.decorators import ratelimit
@@ -17,6 +20,18 @@ from gtts import gTTS
 from io import BytesIO
 
 load_dotenv()
+
+
+def _safe_next_url(request):
+    """Return a local redirect target, never an attacker-controlled URL."""
+    candidate = (request.POST.get('next') or request.GET.get('next') or '').strip()
+    if candidate and url_has_allowed_host_and_scheme(
+        candidate,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ):
+        return candidate
+    return reverse('dashboard')
 
 # g4f for free AI Fallback
 try:
@@ -223,7 +238,7 @@ def delete_book(request, book_id):
 @ratelimit(key='ip', rate=os.environ.get('RATE_LIMIT_AUTH_IP', '5/m'), block=False)
 @ratelimit(key='post:username', rate=os.environ.get('RATE_LIMIT_AUTH_ACCOUNT', '10/h'), block=False)
 def register_user(request):
-    if getattr(request, 'limited', False):
+    if getattr(request, 'limited', False) and not settings.DEBUG:
         return render(request, 'reader/landing.html', {'auth_error': 'Too many registration attempts. Please try again later.', 'auth_action': 'register'}, status=429)
 
     if request.method == 'POST':
@@ -236,7 +251,7 @@ def register_user(request):
             )
             UserProfile.objects.get_or_create(user=user)
             login(request, user, backend='django.contrib.auth.backends.ModelBackend')
-            return redirect('dashboard')
+            return redirect(_safe_next_url(request))
         else:
             errors = " | ".join([f"{e[0]}" for e in form.errors.values()])
             return render(request, 'reader/landing.html', {'auth_error': errors, 'auth_action': 'register'})
@@ -245,20 +260,27 @@ def register_user(request):
 @ratelimit(key='ip', rate=os.environ.get('RATE_LIMIT_AUTH_IP', '5/m'), block=False)
 @ratelimit(key='post:username', rate=os.environ.get('RATE_LIMIT_AUTH_ACCOUNT', '10/h'), block=False)
 def login_user(request):
-    if getattr(request, 'limited', False):
+    if getattr(request, 'limited', False) and not settings.DEBUG:
         return render(request, 'reader/landing.html', {'auth_error': 'Too many login attempts. Please try again later.', 'auth_action': 'login'}, status=429)
 
     if request.method == 'POST':
         data = request.POST
-        username = data.get('username')
-        password = data.get('password')
-        user = authenticate(request, username=username, password=password)
+        login_input = (data.get('username') or '').strip()
+        password = data.get('password', '')
+
+        # Support login by username or email
+        user = authenticate(request, username=login_input, password=password)
+        if user is None and '@' in login_input:
+            matched_user = User.objects.filter(email__iexact=login_input).first()
+            if matched_user:
+                user = authenticate(request, username=matched_user.username, password=password)
+
         if user is not None:
+            UserProfile.objects.get_or_create(user=user)
             login(request, user, backend='django.contrib.auth.backends.ModelBackend')
-            next_url = request.POST.get('next', 'dashboard')
-            return redirect(next_url)
+            return redirect(_safe_next_url(request))
         else:
-            return render(request, 'reader/landing.html', {'auth_error': 'Invalid credentials', 'auth_action': 'login'})
+            return render(request, 'reader/landing.html', {'auth_error': 'Invalid username/email or password', 'auth_action': 'login'})
     return redirect('landing_page')
 
 def logout_user(request):
@@ -266,8 +288,9 @@ def logout_user(request):
     return redirect('landing_page')
 
 
+@login_required(login_url='/')
 def reader_view(request, book_id):
-    book = get_object_or_404(Book, id=book_id)
+    book = get_object_or_404(Book, id=book_id, user=request.user)
     bookmarks = []
     progress = None
     if request.user.is_authenticated:
@@ -282,35 +305,43 @@ def reader_view(request, book_id):
 import re
 
 def _clean_hindi_ocr(text):
-    """Fix common Hindi PDF/OCR extraction errors using regex patterns."""
-    
+    """Fix common Hindi PDF/OCR extraction errors and remove watermarks/ad noise."""
+    if not text:
+        return ""
+
+    # Remove common PDF watermarks and ads
+    watermark_patterns = [
+        r'(?:https?://|www\.)[a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:/[^\s]*)?',
+        r'[a-zA-Z0-9-]+\.(?:com|org|net|in|co\.in|edu|gov)\b(?:/[^\s]*)?',
+        r'hindustanbooks\.com',
+        r't\.me/[a-zA-Z0-9_]+',
+        r'telegram',
+        r'scanned\s*(?:by|with)\s*(?:camscanner|adobe\s*scan|wps)',
+        r'pdfdrive(?:\.com)?',
+        r'downloaded\s*from',
+        r'@\w+',
+    ]
+    for pat in watermark_patterns:
+        text = re.sub(pat, '', text, flags=re.IGNORECASE)
+
     # Devanagari matra characters (dependent vowel signs)
-    # These should NEVER appear with a space before them - they attach to the previous consonant
     matras = 'ा ि ी ु ू ृ ॄ ॅ ॆ े ै ॉ ॊ ो ौ ् ं ँ ः'
     matra_chars = matras.replace(' ', '')
     
     # 1. Remove spaces BEFORE any matra (most critical fix)
-    #    e.g., "ल ूँगा" -> "लूँगा", "मा ॅूँने" -> "माॅूँने"
     text = re.sub(r'(\S) ([' + matra_chars + r'])', r'\1\2', text)
-    # Run it twice to catch double-spaced matras
     text = re.sub(r'(\S) ([' + matra_chars + r'])', r'\1\2', text)
     
-    # 2. Fix ॅ (Candra E) - often a broken chandrabindu, should usually be ँ or ं
-    #    "माॅूँ" type patterns - remove extra ॅ when ँ is already present
+    # 2. Fix ॅ (Candra E)
     text = re.sub(r'ॅ([ँं])', r'\1', text)
-    #    Standalone ॅू -> ूँ  (common corruption pattern)
     text = re.sub(r'ॅू', r'ूँ', text)
-    #    Standalone ॅ before consonants -> ँ
     text = re.sub(r'ॅ(?=[क-ह])', r'ँ', text)
-    #    Remaining standalone ॅ at end of word -> ँ
     text = re.sub(r'ॅ(?=\s|$|[,।\.])', r'ँ', text)
     
-    # 3. Fix broken halant/virama combinations
-    #    "क् या" -> "क्या"
+    # 3. Fix broken halant combinations
     text = re.sub(r'(्) +', r'\1', text)
     
-    # 4. Fix double matras (impossible in correct Hindi)
-    #    "ूू" -> "ू", "ीी" -> "ी" etc.
+    # 4. Fix double matras
     for m in matra_chars:
         text = text.replace(m + m, m)
     
@@ -366,69 +397,57 @@ def _clean_hindi_ocr(text):
 
 def _translate_conversational_hindi(text):
     """Translate English to conversational Hindi or fix broken Hindi PDF text using LLM."""
-    # Always clean OCR errors first
     text = _clean_hindi_ocr(text)
+    if not text.strip():
+        return ""
+
+    is_english = len(re.findall(r'[a-zA-Z]', text)) > len(re.findall(r'[\u0900-\u097F]', text))
+
+    if is_english:
+        system_prompt = (
+            "You are a master Hindi literary translator and scholar. "
+            "Translate the following English passage into eloquent, natural, and grammatically flawless Hindi written strictly in Devanagari script (हिंदी). "
+            "Keep the flow, emotional nuance, and depth of the original text. "
+            "Do NOT output Hinglish or Latin script. Do NOT add any notes, explanations, or quotes. Output ONLY the clean translated Hindi text."
+        )
+    else:
+        system_prompt = (
+            "You are a master Hindi literary editor, proofreader, and scholar. "
+            "The user provides text extracted from a Hindi PDF that suffers from font encoding and OCR corruptions "
+            "(e.g., broken halants, detached matras, incorrect character substitutions). "
+            "Completely reconstruct and polish the text into 100% flawless, authentic, and grammatically correct literary Hindi in Devanagari script (हिंदी). "
+            "Maintain original literary cadence and dialogue formatting. "
+            "Output ONLY the clean Hindi text without any explanations, notes, or markdown fences."
+        )
     
-    # Try Groq first if key is available
     if GROQ_AVAILABLE:
-        try:
-            client = Groq(api_key=GROQ_API_KEY)
-            system_prompt = (
-                "You are a master Hindi literary editor, proofreader, and scholar. "
-                "The user provides text extracted from a Hindi PDF that suffers from severe font encoding and OCR corruption "
-                "(e.g., KrutiDev/broken Devanagari mappings where 'धनिया' became 'धननया', 'सिकोड़' became 'नसकोड', 'चिंता' became 'चचता', 'मालिक' became 'मानलक', 'पूजा' became 'पजा', 'विवाहित' became 'कववानहत', broken halants, detached matras, or missing characters). "
-                "Or if the input text is in English, translate it to rich, natural, authentic Hindi. "
-                "\nYOUR TASK:\n"
-                "Completely reconstruct and polish the text into 100% flawless, authentic, and grammatically correct literary Hindi IN DEVANAGARI SCRIPT (हिंदी). "
-                "Fix all character substitutions, broken matras, incorrect names, and OCR mistakes so it matches the author's original intended masterpiece (e.g., Premchand's Godan). "
-                "\nCRITICAL RULES:\n"
-                "1. Fix all names and words accurately (e.g., 'धनिया', 'सिकोड़कर', 'मालिक', 'चिंता', 'बैलों', 'कतर-ब्योंत', 'मुश्किल').\n"
-                "2. Maintain original literary cadence, idioms, and dialogue formatting.\n"
-                "3. Output STRICTLY in Devanagari script (हिंदी). Do NOT output Hinglish or Latin characters.\n"
-                "4. Output ONLY the clean Hindi text without any explanations, notes, or markdown fences."
-            )
-            
+        client = Groq(api_key=GROQ_API_KEY)
+        candidate_models = [GROQ_MODEL, "openai/gpt-oss-120b", "openai/gpt-oss-20b"]
+        for m in candidate_models:
+            if not m:
+                continue
             try:
-                model_name = GROQ_MODEL
                 completion = client.chat.completions.create(
-                    model=model_name,
+                    model=m,
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": text}
                     ],
-                    temperature=0.1
+                    temperature=0.2
                 )
+                result = completion.choices[0].message.content.strip()
+                if result.startswith('```') and result.endswith('```'):
+                    lines = result.split('\n')
+                    result = '\n'.join(lines[1:-1]).strip()
+                if result:
+                    return result
             except Exception as e:
-                # Fallback to 8b if 70b has issues or rate limit
-                model_name = "allam-2-7b"
-                completion = client.chat.completions.create(
-                    model=model_name,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": text}
-                    ],
-                    temperature=0.1
-                )
-                    
-            result = completion.choices[0].message.content.strip()
-            if result.startswith('```') and result.endswith('```'):
-                lines = result.split('\n')
-                result = '\n'.join(lines[1:-1]).strip()
-            return result
-        except Exception as e:
-            print("Groq translation failed:", e)
+                print(f"Groq {m} Hindi translation attempt failed: {e}")
 
     # Fallback to free AI if available
     if G4FClient:
         try:
             g4f_client = G4FClient()
-            system_prompt = (
-                "You are an expert Hindi translator and editor. The user will provide text extracted from a PDF. "
-                "Your ONLY job is to output perfectly readable and grammatically flawless Hindi IN DEVANAGARI SCRIPT (हिंदी). "
-                "If the input text is in English, translate it to natural, conversational Hindi written STRICTLY in Devanagari script. "
-                "DO NOT use Latin/English letters for the Hindi translation. DO NOT output Hinglish. "
-                "DO NOT output any conversational padding or notes. ONLY output the final translated text."
-            )
             completion = g4f_client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
@@ -442,11 +461,12 @@ def _translate_conversational_hindi(text):
         except Exception as e:
             print("g4f Hindi translation failed:", e)
 
-    # Ultimate fallback: use Google Translator
+    # Ultimate fallback: Google Translator
     try:
         return _translate_chunks_hindi(text)
     except Exception:
         return text
+
 
 def _translate_chunks_hindi(text):
     """Translate English text to Hindi (Devanagari) using Google or MyMemory fallback."""
@@ -483,31 +503,43 @@ def _translate_chunks_hindi(text):
 def _translate_chunks_english(text):
     """Translate text to English using Groq or deep-translator."""
     text = _clean_hindi_ocr(text)
+    if not text.strip():
+        return ""
+
+    is_english = len(re.findall(r'[a-zA-Z]', text)) > len(re.findall(r'[\u0900-\u097F]', text))
+    if is_english and len(re.findall(r'[\u0900-\u097F]', text)) == 0:
+        return text
+
     prompt = (
-        "You are an expert literary translator specializing in Indian literature (e.g., Premchand's Godan). "
+        "You are an expert literary translator specializing in Indian literature. "
         "The user will provide text extracted from a Hindi PDF which may contain font/OCR errors. "
-        "Reconstruct the intended meaning, fix character names (Hori, Dhaniya, Gobar), and translate into eloquent, fluent, natural English suitable for published literature. "
+        "Reconstruct the intended meaning and translate into eloquent, fluent, natural English suitable for published literature. "
         "Do NOT add any notes, explanations, or quotes. Output ONLY the English text."
     )
     
     if GROQ_AVAILABLE:
-        try:
-            client = Groq(api_key=GROQ_API_KEY)
-            completion = client.chat.completions.create(
-                model=GROQ_MODEL,
-                messages=[
-                    {"role": "system", "content": prompt},
-                    {"role": "user", "content": text}
-                ],
-                temperature=0.2
-            )
-            result = completion.choices[0].message.content.strip()
-            if result.startswith('```') and result.endswith('```'):
-                lines = result.split('\n')
-                result = '\n'.join(lines[1:-1]).strip()
-            return result
-        except Exception as e:
-            print("Groq English translation failed:", e)
+        client = Groq(api_key=GROQ_API_KEY)
+        candidate_models = [GROQ_MODEL, "openai/gpt-oss-120b", "openai/gpt-oss-20b"]
+        for m in candidate_models:
+            if not m:
+                continue
+            try:
+                completion = client.chat.completions.create(
+                    model=m,
+                    messages=[
+                        {"role": "system", "content": prompt},
+                        {"role": "user", "content": text}
+                    ],
+                    temperature=0.2
+                )
+                result = completion.choices[0].message.content.strip()
+                if result.startswith('```') and result.endswith('```'):
+                    lines = result.split('\n')
+                    result = '\n'.join(lines[1:-1]).strip()
+                if result:
+                    return result
+            except Exception as e:
+                print(f"Groq {m} English translation failed: {e}")
             
     # Try free AI first if available
     if G4FClient:
@@ -537,45 +569,64 @@ def _translate_chunks_english(text):
 def _translate_to_hinglish(english_text):
     """
     Translate text to natural, accurate conversational Hinglish (romanized Hindi)
-    using Groq with specialized literary OCR restoration, or rule engine fallback.
+    using Groq with specialized bilingual contextual understanding, or high-fidelity fallback.
     """
     cleaned_text = _clean_hindi_ocr(english_text)
+    if not cleaned_text.strip():
+        return ""
 
-    prompt = (
-        "You are an expert Indian literary editor and translator specializing in Hindi literature (Premchand's Godan, etc.). "
-        "The user will provide text extracted from a book (which may be a Hindi book with font encoding/OCR errors, or English). "
-        "If the input is from a Hindi book with OCR errors (e.g. 'धननया' -> 'धनिया/Dhaniya', 'नसकोड' -> 'सिकोड़/sikod', 'मानलक' -> 'मालिक/maalik', 'दोनों बैलों' -> 'bailon', 'कतर-ब्योंत' -> 'katar-byont'): "
-        "Intelligently recognize the correct literary context and character names. "
-        "Translate/transliterate it into natural, fluent, and highly accurate HINGLISH (conversational Hindi written in English/Latin script). "
-        "\nCRITICAL RULES:\n"
-        "1. Fix character names and terms accurately (e.g. use 'Dhaniya' NOT 'Dhanmaya'; 'bailon' NOT 'bagon'; 'maalik' NOT 'maanik'; 'sikod kar' NOT 'nas koord'; 'taang adaati' NOT 'tounge'; 'milte-julte' NOT 'namlate-julate').\n"
-        "2. Keep the natural Indian storytelling tone, emotions, and dialogue style.\n"
-        "3. Use standard, conversational Romanized Hindi spellings (e.g. 'nahi', 'apni', 'chinta', 'kaha', 'main', 'kyun').\n"
-        "4. STRICTLY output in Roman/Latin script (Hinglish). Do NOT output Devanagari script. Do NOT output pure English.\n"
-        "5. Output ONLY the clean Hinglish text, without any quotes, notes, or preamble."
-    )
-    
+    is_english = len(re.findall(r'[a-zA-Z]', cleaned_text)) > len(re.findall(r'[\u0900-\u097F]', cleaned_text))
+
+    if is_english:
+        prompt = (
+            "You are an expert bilingual Indian literary translator. "
+            "Translate the following English passage into natural, fluent, engaging conversational HINGLISH "
+            "(Hindi written in Roman/Latin script, the way modern educated Indians talk, read, and explain ideas). "
+            "\nCRITICAL RULES:\n"
+            "1. Use natural Roman Hindi words for grammar, verbs, connectors, and sentence flow (e.g. 'karta hai', 'zaroori hai', 'lekin', 'kyunki', 'samajhna padega', 'hamesha', 'isliye').\n"
+            "2. Keep important technical, business, military, and conceptual nouns in English as educated Indians naturally do (e.g. 'art of war', 'strategy', 'state', 'vital importance', 'life and death', 'decision', 'discipline').\n"
+            "3. STRICTLY output in Roman/Latin script. Do NOT output Devanagari script. Do NOT output pure English.\n"
+            "4. Output ONLY the clean Hinglish translation without any quotes, preambles, or markdown formatting."
+        )
+    else:
+        prompt = (
+            "You are an expert Indian literary editor and translator. "
+            "The user will provide text extracted from a Hindi book that may contain font encoding or OCR corruptions. "
+            "Fix character substitutions, broken words, and translate/transliterate it into natural, fluent, and highly accurate HINGLISH "
+            "(conversational Hindi written in English/Latin script). "
+            "\nCRITICAL RULES:\n"
+            "1. Fix character names and terms accurately into standard Romanized Hindi (e.g. 'Dhaniya', 'bailon', 'maalik', 'sikod kar', 'katar-byont').\n"
+            "2. Keep the natural Indian storytelling tone, emotions, and dialogue style.\n"
+            "3. Use standard Romanized Hindi spellings (e.g. 'nahi', 'apni', 'chinta', 'kaha', 'main', 'kyun').\n"
+            "4. STRICTLY output in Roman/Latin script. Do NOT output Devanagari script.\n"
+            "5. Output ONLY the clean Hinglish text, without any quotes, notes, or preamble."
+        )
+
     if GROQ_AVAILABLE:
-        try:
-            client = Groq(api_key=GROQ_API_KEY)
-            completion = client.chat.completions.create(
-                model=GROQ_MODEL,
-                messages=[
-                    {"role": "system", "content": prompt},
-                    {"role": "user", "content": cleaned_text}
-                ],
-                temperature=0.2
-            )
-            result = completion.choices[0].message.content.strip()
-            if result and len(result) > 10:
-                if result.startswith('```') and result.endswith('```'):
-                    lines = result.split('\n')
-                    result = '\n'.join(lines[1:-1]).strip()
-                if result.startswith('"') and result.endswith('"'):
-                    result = result[1:-1]
-                return result
-        except Exception as e:
-            print("Groq Hinglish failed:", e)
+        client = Groq(api_key=GROQ_API_KEY)
+        candidate_models = [GROQ_MODEL, "openai/gpt-oss-120b", "openai/gpt-oss-20b"]
+        for m in candidate_models:
+            if not m:
+                continue
+            try:
+                completion = client.chat.completions.create(
+                    model=m,
+                    messages=[
+                        {"role": "system", "content": prompt},
+                        {"role": "user", "content": cleaned_text}
+                    ],
+                    temperature=0.2
+                )
+                result = completion.choices[0].message.content.strip()
+                if result and len(result) > 10:
+                    if result.startswith('```') and result.endswith('```'):
+                        lines = result.split('\n')
+                        result = '\n'.join(lines[1:-1]).strip()
+                    if result.startswith('"') and result.endswith('"'):
+                        result = result[1:-1]
+                    return result
+            except Exception as e:
+                print(f"Groq {m} Hinglish attempt failed: {e}")
 
     # Try free AI if available
     if G4FClient:
@@ -583,7 +634,7 @@ def _translate_to_hinglish(english_text):
             g4f_client = G4FClient()
             completion = g4f_client.chat.completions.create(
                 model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt + "\n\nText:\n" + english_text}]
+                messages=[{"role": "user", "content": prompt + "\n\nText:\n" + cleaned_text}]
             )
             result = completion.choices[0].message.content.strip()
             if result and len(result) > 10:
@@ -593,22 +644,13 @@ def _translate_to_hinglish(english_text):
         except Exception as e:
             print("g4f Hinglish failed:", e)
 
-    # High quality offline fallback: Natural Hinglish Engine
-    try:
-        natural_hinglish = translate_to_natural_hinglish(english_text)
-        if natural_hinglish and len(natural_hinglish.strip()) > 0:
-            return natural_hinglish
-    except Exception as e:
-        print("Natural Hinglish engine failed:", e)
-
     # Fallback: English -> Hindi -> Romanized Google Translate
-    hindi_text = _translate_conversational_hindi(english_text)
-
+    hindi_text = _translate_conversational_hindi(cleaned_text)
     if not hindi_text:
-        return english_text
+        return cleaned_text
 
     url = "https://translate.googleapis.com/translate_a/single"
-    chunk_size = 4500
+    chunk_size = 4000
     hindi_chunks = [hindi_text[i:i + chunk_size] for i in range(0, len(hindi_text), chunk_size)]
     romanized_parts = []
 
@@ -638,8 +680,9 @@ def _translate_to_hinglish(english_text):
 
 
 @ratelimit(key='user', rate=os.environ.get('RATE_LIMIT_USER', '60/m'), block=False)
+@login_required(login_url='/')
 def translate_page(request):
-    if getattr(request, 'limited', False):
+    if getattr(request, 'limited', False) and not settings.DEBUG:
         return JsonResponse({'error': 'Too many requests. Please wait a moment.'}, status=429)
 
     if request.method == 'POST':
@@ -665,20 +708,25 @@ def translate_page(request):
             if not english_text:
                 return JsonResponse({'page_number': page_number, 'hindi_text': '', 'language': language})
 
-            book = get_object_or_404(Book, id=book_id)
+            book = get_object_or_404(Book, id=book_id, user=request.user)
 
             # ── Check cache ──
             if not force_refresh:
                 cache_entry = TranslationCache.objects.filter(
                     book=book, page_number=page_number, language=language
                 ).first()
-                if cache_entry:
-                    return JsonResponse({
-                        'page_number': page_number,
-                        'hindi_text': cache_entry.hindi_text,
-                        'summary_text': cache_entry.summary_text or '',
-                        'language': language
-                    })
+                if cache_entry and cache_entry.hindi_text:
+                    cached_val = cache_entry.hindi_text.strip()
+                    is_bad_cache = False
+                    if language == 'hinglish' and ('(mausam aur samay)' in cached_val or '(zameen aur terrain' in cached_val or '(desh/rajya)' in cached_val):
+                        is_bad_cache = True
+                    if not is_bad_cache:
+                        return JsonResponse({
+                            'page_number': page_number,
+                            'hindi_text': cached_val,
+                            'summary_text': cache_entry.summary_text or '',
+                            'language': language
+                        })
 
             # ── Translate ──
             if language == 'hindi':
@@ -803,7 +851,7 @@ def api_update_progress(request):
             book_id = data.get('book_id')
             current_page = data.get('current_page', 1)
             total_pages = data.get('total_pages', 0)
-            book = get_object_or_404(Book, id=book_id)
+            book = get_object_or_404(Book, id=book_id, user=request.user)
             progress, created = ReadingProgress.objects.update_or_create(
                 user=request.user,
                 book=book,
@@ -824,7 +872,7 @@ def api_toggle_bookmark(request):
             book_id = data.get('book_id')
             page_number = data.get('page_number')
             note = data.get('note', '')
-            book = get_object_or_404(Book, id=book_id)
+            book = get_object_or_404(Book, id=book_id, user=request.user)
             existing = Bookmark.objects.filter(user=request.user, book=book, page_number=page_number).first()
             if existing:
                 if note and note != existing.note:
@@ -844,7 +892,7 @@ def api_toggle_bookmark(request):
 @login_required(login_url='/')
 def api_get_bookmarks(request, book_id):
     """Get all bookmarks for a book."""
-    book = get_object_or_404(Book, id=book_id)
+    book = get_object_or_404(Book, id=book_id, user=request.user)
     bookmarks = Bookmark.objects.filter(user=request.user, book=book).values('page_number', 'note', 'created_at')
     return JsonResponse({'bookmarks': list(bookmarks)})
 
@@ -858,7 +906,7 @@ def api_save_note(request):
             book_id = data.get('book_id')
             page_number = data.get('page_number')
             note = data.get('note', '')
-            book = get_object_or_404(Book, id=book_id)
+            book = get_object_or_404(Book, id=book_id, user=request.user)
             bookmark, created = Bookmark.objects.update_or_create(
                 user=request.user, book=book, page_number=page_number,
                 defaults={'note': note}
@@ -903,7 +951,9 @@ def api_manage_tags(request):
             elif action == 'unassign':
                 book_id = data.get('book_id')
                 tag_id = data.get('tag_id')
-                BookTagAssignment.objects.filter(book_id=book_id, tag_id=tag_id).delete()
+                book = get_object_or_404(Book, id=book_id, user=request.user)
+                tag = get_object_or_404(BookTag, id=tag_id, user=request.user)
+                BookTagAssignment.objects.filter(book=book, tag=tag).delete()
                 return JsonResponse({'status': 'unassigned'})
             
             return JsonResponse({'error': 'Unknown action'}, status=400)

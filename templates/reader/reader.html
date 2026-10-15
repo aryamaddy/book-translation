@@ -244,6 +244,8 @@
         }
 
         .pdf-container canvas {
+            max-width: 100%;
+            height: auto;
             box-shadow: 0 12px 48px rgba(0, 0, 0, 0.06);
             border-radius: 4px;
         }
@@ -617,12 +619,18 @@
         </a>
 
         <div class="page-nav">
-            <button id="prev-btn">← Prev</button>
+            <button id="prev-btn" title="Previous Page (Left Arrow)">← Prev</button>
             <span class="page-info">
                 <input type="number" id="page-input" class="page-input" value="1" min="1"> <span style="opacity: 0.6; margin: 0 4px;">/</span> <span id="page-count">-</span>
             </span>
-            <button id="next-btn">Next →</button>
-            <div style="width: 1px; height: 20px; background: var(--border-dark); margin: 0 8px;"></div>
+            <button id="next-btn" title="Next Page (Right Arrow)">Next →</button>
+            <div style="width: 1px; height: 20px; background: var(--border-dark); margin: 0 6px;"></div>
+            <div class="zoom-controls" style="display: flex; gap: 4px; align-items: center;">
+                <button id="btn-zoom-out" style="padding: 6px 12px; font-size: 14px; line-height: 1;" title="Zoom Out">−</button>
+                <button id="btn-zoom-fit" style="padding: 6px 14px; font-size: 11px; letter-spacing: 0.05em;" title="Reset Zoom">Fit</button>
+                <button id="btn-zoom-in" style="padding: 6px 12px; font-size: 14px; line-height: 1;" title="Zoom In">+</button>
+            </div>
+            <div style="width: 1px; height: 20px; background: var(--border-dark); margin: 0 6px;"></div>
             <button id="bookmark-btn" title="Bookmark this page">🔖 Save</button>
         </div>
 
@@ -815,7 +823,8 @@
 
         let currentAudio = new Audio(); // Global audio instance to prevent Safari autoplay block
 
-        const scale = 1.5;
+        let currentScale = 1.5;
+        let currentRenderTask = null; // Track and cancel in-flight PDF.js render tasks
         const canvas = document.getElementById('pdf-render');
         const ctx = canvas.getContext('2d');
 
@@ -824,6 +833,51 @@
         const nextBtn = document.getElementById('next-btn');
         const pageInputEl = document.getElementById('page-input');
         const bookmarkBtn = document.getElementById('bookmark-btn');
+        const btnZoomIn = document.getElementById('btn-zoom-in');
+        const btnZoomOut = document.getElementById('btn-zoom-out');
+        const btnZoomFit = document.getElementById('btn-zoom-fit');
+
+        if (btnZoomIn) {
+            btnZoomIn.addEventListener('click', () => {
+                if (currentScale < 3.0) {
+                    currentScale = Math.round((currentScale + 0.25) * 100) / 100;
+                    queueRenderPage(pageNum);
+                }
+            });
+        }
+        if (btnZoomOut) {
+            btnZoomOut.addEventListener('click', () => {
+                if (currentScale > 0.75) {
+                    currentScale = Math.round((currentScale - 0.25) * 100) / 100;
+                    queueRenderPage(pageNum);
+                }
+            });
+        }
+        if (btnZoomFit) {
+            btnZoomFit.addEventListener('click', () => {
+                currentScale = 1.5;
+                queueRenderPage(pageNum);
+            });
+        }
+
+        // ─── Keyboard Navigation (ArrowLeft / ArrowRight) ───────────────
+        document.addEventListener('keydown', (e) => {
+            const tag = e.target.tagName ? e.target.tagName.toLowerCase() : '';
+            if (tag === 'input' || tag === 'textarea' || e.target.isContentEditable) {
+                return;
+            }
+            if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
+                if (pageNum > 1) {
+                    pageNum--;
+                    queueRenderPage(pageNum);
+                }
+            } else if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') {
+                if (pdfDoc && pageNum < pdfDoc.numPages) {
+                    pageNum++;
+                    queueRenderPage(pageNum);
+                }
+            }
+        });
 
         pageInputEl.addEventListener('keyup', (e) => {
             if (e.key === 'Enter') {
@@ -980,6 +1034,12 @@
                 extractDebounceTimer = null;
             }
 
+            // Cancel any in-flight PDF render task to prevent canvas collision errors
+            if (currentRenderTask) {
+                try { currentRenderTask.cancel(); } catch(e) {}
+                currentRenderTask = null;
+            }
+
             // 2. Set UI immediately for the target page
             if (currentLang !== 'normal') {
                 const cacheKey = `${bookId}_${num}_${currentLang}`;
@@ -1001,11 +1061,13 @@
                     return;
                 }
 
-                const viewport = page.getViewport({ scale });
+                const viewport = page.getViewport({ scale: currentScale });
                 canvas.height = viewport.height;
                 canvas.width = viewport.width;
 
-                page.render({ canvasContext: ctx, viewport }).promise.then(() => {
+                currentRenderTask = page.render({ canvasContext: ctx, viewport });
+                currentRenderTask.promise.then(() => {
+                    currentRenderTask = null;
                     pageIsRendering = false;
                     if (pageNumIsPending !== null) {
                         const nextNum = pageNumIsPending;
@@ -1013,7 +1075,11 @@
                         renderPage(nextNum);
                     }
                 }).catch(err => {
+                    currentRenderTask = null;
                     pageIsRendering = false;
+                    if (err.name !== 'RenderingCancelledException') {
+                        console.warn('PDF render error:', err);
+                    }
                 });
 
                 pageInputEl.value = num;
@@ -1024,6 +1090,8 @@
                         extractAndTranslate(page, num);
                     }
                 }, 150);
+            }).catch(err => {
+                pageIsRendering = false;
             });
         }
 
@@ -1060,23 +1128,33 @@
                     lastY = item.transform[5];
                 });
 
-                // --- Remove Watermarks (URLs and standalone page numbers) ---
+                // --- Comprehensive Watermark & Header/Footer Cleaner ---
                 const urlRegex = /(?:https?:\/\/|www\.)[a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:\/[^\s]*)?|[a-zA-Z0-9-]+\.(?:com|org|net|in|co\.in|edu|gov)\b(?:\/[^\s]*)?/gi;
+                const watermarkPatterns = [
+                    /hindustanbooks\.com/i,
+                    /t\.me\/[a-zA-Z0-9_]+/i,
+                    /telegram/i,
+                    /scanned\s*(?:by|with)\s*(?:camscanner|adobe\s*scan|wps)/i,
+                    /pdfdrive(?:\.com)?/i,
+                    /@\w+/i,
+                    /downloaded\s*from/i,
+                ];
+
                 let paragraphs = englishText.split('\n\n');
 
                 paragraphs = paragraphs.map(p => {
-                    // Strip URL to check what's left
-                    let textWithoutUrl = p.replace(urlRegex, '').trim();
-                    if (p.toLowerCase().includes('hindustanbooks.com')) {
+                    const trimmed = p.trim();
+                    for (const pat of watermarkPatterns) {
+                        if (pat.test(trimmed)) {
+                            return '';
+                        }
+                    }
+                    let textWithoutUrl = trimmed.replace(urlRegex, '').trim();
+                    // If empty or standalone page number (e.g. '1', '- 12 -')
+                    if (/^[-—\s]*\d+[-—\s]*$/.test(textWithoutUrl)) {
                         return '';
                     }
-                    // If the remaining text is completely empty or just a number (like page '1'), 
-                    // then this entire block is a header/footer watermark.
-                    if (/^\s*\d*\s*$/.test(textWithoutUrl)) {
-                        return '';
-                    }
-                    // Otherwise, just remove the URL but keep the real text
-                    return p.replace(urlRegex, '').trim();
+                    return textWithoutUrl;
                 });
 
                 const cleanedText = paragraphs.filter(p => p.length > 0).join('\n\n').trim();

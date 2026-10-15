@@ -52,8 +52,8 @@ class RegisterForm(forms.Form):
             raise ValidationError("Email already registered")
 
 class PageTranslationForm(forms.Form):
-    book_id = forms.IntegerField(required=True)
-    page_number = forms.IntegerField(required=True)
+    book_id = forms.IntegerField(required=True, min_value=1)
+    page_number = forms.IntegerField(required=True, min_value=1)
     english_text = forms.CharField(required=False, max_length=100000, empty_value='')
     language = forms.ChoiceField(choices=[('hindi', 'Hindi'), ('hinglish', 'Hinglish'), ('english', 'English')], required=False)
     force_refresh = forms.BooleanField(required=False)
@@ -63,6 +63,6 @@ class AskBookForm(forms.Form):
     page_text = forms.CharField(required=False, max_length=100000, empty_value='')
 
 class TTSForm(forms.Form):
-    text = forms.CharField(required=True, max_length=5000)
+    text = forms.CharField(required=True, max_length=5000, strip=True)
     language = forms.ChoiceField(choices=[('hindi', 'Hindi'), ('hinglish', 'Hinglish'), ('english', 'English')], required=False)
 
