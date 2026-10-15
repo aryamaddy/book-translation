@@ -90,8 +90,10 @@ def dashboard(request):
                 ErrorLog.objects.create(action="Dashboard Form Invalid", error_message=error, user_info=request.user.username)
         except Exception as e:
             import traceback
-            ErrorLog.objects.create(action="Dashboard Exception", error_message=traceback.format_exc(), user_info=request.user.username)
-            error = "An unexpected error occurred during upload. Our team has been notified."
+            tb = traceback.format_exc()
+            print("Dashboard Upload Exception:", tb)
+            ErrorLog.objects.create(action="Dashboard Exception", error_message=tb, user_info=request.user.username)
+            error = f"Upload error: {str(e)}" if settings.DEBUG else "An unexpected error occurred during upload. Please ensure the PDF is valid."
     else:
         form = BookForm()
         
