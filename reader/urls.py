@@ -19,4 +19,5 @@ urlpatterns = [
     path('api/bookmarks/<int:book_id>/', views.api_get_bookmarks, name='api_get_bookmarks'),
     path('api/note/', views.api_save_note, name='api_save_note'),
     path('api/tags/', views.api_manage_tags, name='api_manage_tags'),
+    path('api/vocabulary/', views.api_vocabulary, name='api_vocabulary'),
 ]

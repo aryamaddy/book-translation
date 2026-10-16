@@ -10,7 +10,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 
 <p align="center">
-  <b>Read any English or Hindi PDF book side-by-side with context-aware AI translations in Pure Hindi, conversational Hinglish, or English — without losing document layout or reading flow.</b>
+  <b>Read text-based English or Hindi PDFs side-by-side with context-aware AI translations in Hindi, conversational Hinglish, or English — while keeping the original document visible.</b>
 </p>
 
 </div>
@@ -31,13 +31,13 @@ For millions of bilingual readers, diving into English or classical literature c
 
 | Feature | Description |
 |---|---|
-| 📑 **Pixel-Perfect Split View** | Keeps the visual fidelity of the original PDF while rendering readable translated text alongside. |
+| 📑 **Split-View Reader** | Keeps the original PDF visible alongside a readable translated text pane. Complex scanned/image-only PDFs may require OCR and are not guaranteed to preserve layout. |
 | ⚡ **Contextual AI Engine** | Powered by high-throughput **Groq LPU (Llama 3 / Qwen)** for authentic Indian literary cadence and idiom preservation. |
 | 🛡️ **Race-Condition & Skip Defense** | Built with `AbortController` and monotonic request IDs — rapidly flipping through pages never causes stale or overlapping translations. |
-| 🏎️ **Dual-Tier Smart Caching** | Instant client memory cache (`<1ms`) + persistent database cache (`<50ms`) for zero latency on revisited pages. |
+| 🏎️ **Translation Caching** | Revisited pages reuse a database cache when the source text is unchanged, reducing repeat provider calls. |
 | 🗣️ **Text-to-Speech (TTS)** | Listen to Hindi or English translations hands-free with the integrated web TTS player. |
 | 🤖 **Ask The Book (AI Tutor)** | In-reader AI assistant that directly answers queries about the active page's storyline, characters, and themes. |
-| 📖 **Vocabulary Vault** | Tap any complex word to retrieve its contextual definition and bookmark it for personalized revision. |
+| 📖 **Vocabulary API** | Authenticated users can save, list, update, and delete translated vocabulary items with context. |
 | 🧘 **Zen Focus Mode** | Built-in Pomodoro timer with ambient background audio (Rain, Focus, Forest) for distraction-free reading sessions. |
 | 🔐 **Admin & User Management** | Complete Django admin dashboard for managing books, users, translation caches, and error logs. |
 
@@ -120,13 +120,20 @@ Create a `.env` file in the project root:
 # Required for AI Translation
 GROQ_API_KEY=gsk_your_groq_api_key_here
 
-# Django Settings (Optional for development)
+# Django Settings (Set DEBUG explicitly for local development)
 DEBUG=True
 SECRET_KEY=your_secret_key_here
+ALLOWED_HOSTS=127.0.0.1,localhost
+CSRF_TRUSTED_ORIGINS=http://127.0.0.1:8000,http://localhost:8000
 
-# Database (Optional: Defaults to SQLite if omitted)
+# Database (Optional for local development; required on Vercel)
 # DATABASE_URL=postgresql://user:password@localhost:5432/bookdb
 ```
+
+`DEBUG` defaults to `False`. The local SQLite database and `media/` upload
+directory are available when `DEBUG=True` is set explicitly. When `DEBUG=False`,
+set `SECRET_KEY`; the application will fail at startup rather than use a
+development key.
 
 ### 5. Apply Database Migrations
 ```bash
@@ -145,6 +152,38 @@ python manage.py runserver
 
 Open [http://127.0.0.1:8000](http://127.0.0.1:8000) in your web browser.
 
+### Vercel deployment
+
+Vercel's function filesystem is ephemeral, so this project does not fall back
+to SQLite or `/tmp` for deployed data. If `VERCEL` is enabled, startup fails
+with a clear error unless both a persistent database and complete S3-compatible
+object-storage configuration are present.
+
+Set these Vercel environment variables (Neon Object Storage uses these AWS
+standard names):
+
+```env
+VERCEL=1
+DEBUG=False
+SECRET_KEY=replace_with_a_long_random_value
+ALLOWED_HOSTS=.vercel.app,your-domain.example
+CSRF_TRUSTED_ORIGINS=https://*.vercel.app,https://your-domain.example
+DATABASE_URL=postgresql://user:password@host/database
+
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+AWS_ENDPOINT_URL_S3=https://...
+AWS_REGION=us-east-2
+AWS_STORAGE_BUCKET_NAME=media
+```
+
+Provision the `media` bucket (see `neon.ts`) before deploying. The required
+storage variables keep uploaded PDFs out of the ephemeral Vercel filesystem.
+For a proxy with different HTTPS behavior, `SECURE_SSL_REDIRECT`,
+`SESSION_COOKIE_SECURE`, `CSRF_COOKIE_SECURE`,
+`SECURE_PROXY_SSL_HEADER_ENABLED`, `SECURE_HSTS_SECONDS`, and the other
+`SECURE_*` settings can be overridden with environment variables.
+
 ---
 
 ## 📡 API Endpoints Overview
@@ -152,10 +191,11 @@ Open [http://127.0.0.1:8000](http://127.0.0.1:8000) in your web browser.
 | Method | Endpoint | Description |
 |---|---|---|
 | `POST` | `/api/translate-page/` | Translates page text to Hindi, Hinglish, or English with caching |
-| `POST` | `/api/tts/` | Generates streaming audio for translated text |
+| `POST` | `/api/tts/` | Authenticated users can generate audio for translated text |
 | `POST` | `/api/ask-book/` | Context-aware AI tutor chat for the current page |
 | `POST` | `/api/bookmark/` | Saves or toggles bookmark for the active page |
 | `POST` | `/api/progress/` | Updates user reading percentage and resume state |
+| `GET/POST/DELETE` | `/api/vocabulary/` | Lists, saves, updates, or deletes the current user's vocabulary |
 | `GET` | `/admin/` | Superuser administration portal for books, users, and logs |
 
 ---

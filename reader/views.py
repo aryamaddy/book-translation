@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from django.contrib.auth.decorators import login_required
 from django.db.models import Count
 from django.shortcuts import render, redirect, get_object_or_404
-from django.http import JsonResponse, HttpResponse
+from django.http import JsonResponse, HttpResponse, Http404
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
 from deep_translator import GoogleTranslator
@@ -717,7 +717,7 @@ def translate_page(request):
                 cache_entry = TranslationCache.objects.filter(
                     book=book, page_number=page_number, language=language
                 ).first()
-                if cache_entry and cache_entry.hindi_text:
+                if cache_entry and cache_entry.hindi_text and cache_entry.english_text == english_text:
                     cached_val = cache_entry.hindi_text.strip()
                     is_bad_cache = False
                     if language == 'hinglish' and ('(mausam aur samay)' in cached_val or '(zameen aur terrain' in cached_val or '(desh/rajya)' in cached_val):
@@ -745,7 +745,7 @@ def translate_page(request):
             if force_refresh:
                 TranslationCache.objects.filter(book=book, page_number=page_number, language=language).delete()
                 
-            TranslationCache.objects.get_or_create(
+            TranslationCache.objects.update_or_create(
                 book=book,
                 page_number=page_number,
                 language=language,
@@ -769,7 +769,8 @@ def translate_page(request):
     return JsonResponse({'error': 'Invalid request method'}, status=405)
 
 
-@ratelimit(key='ip', rate=os.environ.get('RATE_LIMIT_PUBLIC', '30/m'), block=False)
+@login_required(login_url='/')
+@ratelimit(key='user', rate=os.environ.get('RATE_LIMIT_TTS', '30/m'), block=False)
 def text_to_speech(request):
     if getattr(request, 'limited', False):
         return JsonResponse({'error': 'Rate limit exceeded. Try again later.'}, status=429)
@@ -853,6 +854,10 @@ def api_update_progress(request):
             book_id = data.get('book_id')
             current_page = data.get('current_page', 1)
             total_pages = data.get('total_pages', 0)
+            if not isinstance(current_page, int) or not isinstance(total_pages, int):
+                return JsonResponse({'error': 'Page values must be integers.'}, status=400)
+            if current_page < 1 or total_pages < 0 or (total_pages and current_page > total_pages):
+                return JsonResponse({'error': 'Invalid reading progress values.'}, status=400)
             book = get_object_or_404(Book, id=book_id, user=request.user)
             progress, created = ReadingProgress.objects.update_or_create(
                 user=request.user,
@@ -860,6 +865,8 @@ def api_update_progress(request):
                 defaults={'current_page': current_page, 'total_pages': total_pages}
             )
             return JsonResponse({'status': 'ok', 'percent': progress.percent})
+        except Http404:
+            raise
         except Exception as e:
             return JsonResponse({'error': str(e)}, status=500)
     return JsonResponse({'error': 'Invalid method'}, status=405)
@@ -874,6 +881,10 @@ def api_toggle_bookmark(request):
             book_id = data.get('book_id')
             page_number = data.get('page_number')
             note = data.get('note', '')
+            if not isinstance(page_number, int) or page_number < 1:
+                return JsonResponse({'error': 'page_number must be a positive integer.'}, status=400)
+            if not isinstance(note, str) or len(note) > 5000:
+                return JsonResponse({'error': 'note must be text up to 5000 characters.'}, status=400)
             book = get_object_or_404(Book, id=book_id, user=request.user)
             existing = Bookmark.objects.filter(user=request.user, book=book, page_number=page_number).first()
             if existing:
@@ -908,6 +919,10 @@ def api_save_note(request):
             book_id = data.get('book_id')
             page_number = data.get('page_number')
             note = data.get('note', '')
+            if not isinstance(page_number, int) or page_number < 1:
+                return JsonResponse({'error': 'page_number must be a positive integer.'}, status=400)
+            if not isinstance(note, str) or len(note) > 5000:
+                return JsonResponse({'error': 'note must be text up to 5000 characters.'}, status=400)
             book = get_object_or_404(Book, id=book_id, user=request.user)
             bookmark, created = Bookmark.objects.update_or_create(
                 user=request.user, book=book, page_number=page_number,
@@ -961,6 +976,57 @@ def api_manage_tags(request):
             return JsonResponse({'error': 'Unknown action'}, status=400)
         except Exception as e:
             return JsonResponse({'error': str(e)}, status=500)
+    return JsonResponse({'error': 'Invalid method'}, status=405)
+
+
+@login_required(login_url='/')
+def api_vocabulary(request):
+    """Create, list, or delete vocabulary items belonging to the current user."""
+    if request.method == 'GET':
+        words = Vocabulary.objects.filter(user=request.user).values(
+            'id', 'english_word', 'hindi_translation', 'context_sentence', 'saved_at'
+        )
+        return JsonResponse({'vocabulary': list(words)})
+
+    if request.method == 'POST':
+        try:
+            data = json.loads(request.body)
+        except (TypeError, json.JSONDecodeError):
+            return JsonResponse({'error': 'Invalid JSON body.'}, status=400)
+
+        english_word = str(data.get('english_word') or '').strip()
+        hindi_translation = str(data.get('hindi_translation') or '').strip()
+        context_sentence = str(data.get('context_sentence') or '').strip()
+        if not english_word or not hindi_translation:
+            return JsonResponse({'error': 'english_word and hindi_translation are required.'}, status=400)
+        if len(english_word) > 255 or len(hindi_translation) > 255 or len(context_sentence) > 5000:
+            return JsonResponse({'error': 'Vocabulary fields exceed their maximum length.'}, status=400)
+
+        word, created = Vocabulary.objects.get_or_create(
+            user=request.user,
+            english_word=english_word,
+            defaults={
+                'hindi_translation': hindi_translation,
+                'context_sentence': context_sentence,
+            },
+        )
+        if not created:
+            word.hindi_translation = hindi_translation
+            word.context_sentence = context_sentence
+            word.save(update_fields=['hindi_translation', 'context_sentence'])
+        return JsonResponse({'status': 'created' if created else 'updated', 'id': word.id})
+
+    if request.method == 'DELETE':
+        try:
+            data = json.loads(request.body)
+            vocabulary_id = int(data.get('id'))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return JsonResponse({'error': 'A valid vocabulary id is required.'}, status=400)
+        deleted, _ = Vocabulary.objects.filter(id=vocabulary_id, user=request.user).delete()
+        if not deleted:
+            return JsonResponse({'error': 'Vocabulary item not found.'}, status=404)
+        return JsonResponse({'status': 'deleted'})
+
     return JsonResponse({'error': 'Invalid method'}, status=405)
 
 

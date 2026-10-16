@@ -24,27 +24,89 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
+
+def _env_bool(name, default=False):
+    """Read a strict boolean environment variable."""
+    value = os.environ.get(name)
+    if value is None or not value.strip():
+        return default
+
+    normalized = value.strip().lower()
+    if normalized in {'1', 'true', 'yes', 'on'}:
+        return True
+    if normalized in {'0', 'false', 'no', 'off'}:
+        return False
+    raise ValueError(f"{name} must be one of: 1, 0, true, false, yes, no, on, off")
+
+
+def _env_int(name, default):
+    """Read an integer environment variable with a useful startup error."""
+    value = os.environ.get(name)
+    if value is None or not value.strip():
+        return default
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer") from exc
+
+
+def _env_list(name, default):
+    """Read a comma-separated environment variable, dropping blank entries."""
+    value = os.environ.get(name)
+    if value is None:
+        return list(default)
+    return [item.strip() for item in value.split(',') if item.strip()]
+
+
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.environ.get('DEBUG', 'True').lower() == 'true'
+DEBUG = _env_bool('DEBUG', default=False)
+IS_VERCEL = _env_bool('VERCEL', default=False)
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-dummy-key-for-dev-only-do-not-use-in-prod')
-if not os.environ.get('SECRET_KEY') and not DEBUG:
-    raise ValueError("SECRET_KEY must be set in production")
+SECRET_KEY = os.environ.get('SECRET_KEY', '').strip()
+if not SECRET_KEY and not DEBUG:
+    raise ValueError("SECRET_KEY must be set when DEBUG=False")
+if not SECRET_KEY:
+    # This fallback is intentionally available only for explicit local DEBUG.
+    SECRET_KEY = 'django-insecure-dummy-key-for-dev-only-do-not-use-in-prod'
 
 if DEBUG:
-    ALLOWED_HOSTS = ['*']
+    ALLOWED_HOSTS = _env_list('ALLOWED_HOSTS', ['*'])
 else:
-    ALLOWED_HOSTS = [h.strip() for h in os.environ.get('ALLOWED_HOSTS', '.vercel.app,book-translation.onrender.com,127.0.0.1,localhost,testserver').split(',') if h.strip()]
+    ALLOWED_HOSTS = _env_list(
+        'ALLOWED_HOSTS',
+        ['.vercel.app', 'book-translation.onrender.com', '127.0.0.1', 'localhost', 'testserver'],
+    )
 
-CSRF_TRUSTED_ORIGINS = [
-    'https://*.vercel.app',
-    'https://book-translation.onrender.com',
-    'http://127.0.0.1:8000',
-    'http://localhost:8000',
-    'http://127.0.0.1:8001',
-    'http://localhost:8001',
-]
+CSRF_TRUSTED_ORIGINS = _env_list(
+    'CSRF_TRUSTED_ORIGINS',
+    [
+        'https://*.vercel.app',
+        'https://book-translation.onrender.com',
+        'http://127.0.0.1:8000',
+        'http://localhost:8000',
+        'http://127.0.0.1:8001',
+        'http://localhost:8001',
+    ],
+)
+
+# Forwarded HTTPS and cookie/redirect behavior are configurable for the
+# hosting proxy in front of Django. Secure defaults apply whenever DEBUG is
+# disabled, while local development remains HTTP-friendly.
+SECURE_PROXY_SSL_HEADER_ENABLED = _env_bool('SECURE_PROXY_SSL_HEADER_ENABLED', default=not DEBUG)
+if SECURE_PROXY_SSL_HEADER_ENABLED:
+    SECURE_PROXY_SSL_HEADER = (
+        os.environ.get('SECURE_PROXY_SSL_HEADER_NAME', 'HTTP_X_FORWARDED_PROTO'),
+        os.environ.get('SECURE_PROXY_SSL_HEADER_VALUE', 'https'),
+    )
+SECURE_SSL_REDIRECT = _env_bool('SECURE_SSL_REDIRECT', default=not DEBUG)
+SESSION_COOKIE_SECURE = _env_bool('SESSION_COOKIE_SECURE', default=not DEBUG)
+CSRF_COOKIE_SECURE = _env_bool('CSRF_COOKIE_SECURE', default=not DEBUG)
+SECURE_HSTS_SECONDS = _env_int('SECURE_HSTS_SECONDS', 0)
+SECURE_HSTS_INCLUDE_SUBDOMAINS = _env_bool('SECURE_HSTS_INCLUDE_SUBDOMAINS', default=False)
+SECURE_HSTS_PRELOAD = _env_bool('SECURE_HSTS_PRELOAD', default=False)
+SECURE_CONTENT_TYPE_NOSNIFF = _env_bool('SECURE_CONTENT_TYPE_NOSNIFF', default=True)
+SECURE_REFERRER_POLICY = os.environ.get('SECURE_REFERRER_POLICY', 'same-origin').strip()
 
 # Application definition
 
@@ -101,10 +163,17 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
-default_db_url = f'sqlite:////tmp/db.sqlite3' if os.environ.get('VERCEL') else f'sqlite:///{BASE_DIR}/db.sqlite3'
+database_url = os.environ.get('DATABASE_URL', '').strip()
+if IS_VERCEL and not database_url:
+    raise ValueError(
+        'DATABASE_URL must be set on Vercel; its filesystem is ephemeral and cannot safely store SQLite data.'
+    )
+
+default_db_url = f'sqlite:///{BASE_DIR}/db.sqlite3'
 DATABASES = {
     'default': dj_database_url.config(
-        default=os.environ.get('DATABASE_URL', default_db_url)
+        default=database_url or default_db_url,
+        conn_max_age=_env_int('DATABASE_CONN_MAX_AGE', 600),
     )
 }
 
@@ -156,12 +225,16 @@ STATICFILES_STORAGE = 'whitenoise.storage.CompressedStaticFilesStorage'
 
 # Media files (Uploaded PDFs)
 MEDIA_URL = '/media/'
-if os.environ.get('VERCEL'):
-    from pathlib import Path
-    MEDIA_ROOT = Path('/tmp/media')
-else:
-    MEDIA_ROOT = BASE_DIR / 'media'
-MEDIA_ROOT.mkdir(parents=True, exist_ok=True)
+MEDIA_ROOT = BASE_DIR / 'media'
+if not IS_VERCEL:
+    MEDIA_ROOT.mkdir(parents=True, exist_ok=True)
+
+# Keep uploads out of the process memory where possible and use restrictive
+# permissions for local files. These are configurable for larger documents.
+FILE_UPLOAD_MAX_MEMORY_SIZE = _env_int('FILE_UPLOAD_MAX_MEMORY_SIZE', 10 * 1024 * 1024)
+DATA_UPLOAD_MAX_MEMORY_SIZE = _env_int('DATA_UPLOAD_MAX_MEMORY_SIZE', 10 * 1024 * 1024)
+FILE_UPLOAD_PERMISSIONS = 0o640
+FILE_UPLOAD_DIRECTORY_PERMISSIONS = 0o750
 
 
 # Allauth Settings
@@ -192,13 +265,7 @@ SOCIALACCOUNT_PROVIDERS = {
     }
 }
 
-if not DEBUG:
-    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-    ACCOUNT_DEFAULT_HTTP_PROTOCOL = 'https'
-    SESSION_COOKIE_SECURE = True
-    CSRF_COOKIE_SECURE = True
-else:
-    ACCOUNT_DEFAULT_HTTP_PROTOCOL = 'http'
+ACCOUNT_DEFAULT_HTTP_PROTOCOL = 'https' if not DEBUG else 'http'
 
 # Robust Allauth settings
 ACCOUNT_SIGNUP_FIELDS = ['email*', 'username*', 'password1*', 'password2*']
@@ -207,7 +274,32 @@ SOCIALACCOUNT_EMAIL_AUTHENTICATION = True
 SOCIALACCOUNT_EMAIL_AUTHENTICATION_AUTO_CONNECT = True
 
 # Neon Object Storage / AWS S3 Config
-if os.environ.get('AWS_ACCESS_KEY_ID'):
+_storage_env = {
+    name: os.environ.get(name, '').strip()
+    for name in (
+        'AWS_ACCESS_KEY_ID',
+        'AWS_SECRET_ACCESS_KEY',
+        'AWS_ENDPOINT_URL_S3',
+        'AWS_REGION',
+        'AWS_STORAGE_BUCKET_NAME',
+    )
+}
+_storage_env_names = tuple(_storage_env)
+_storage_configured = any(_storage_env.values())
+_missing_storage = [name for name, value in _storage_env.items() if not value]
+
+if IS_VERCEL and _missing_storage:
+    raise ValueError(
+        'Vercel requires complete object storage configuration for uploads. '
+        f'Missing: {", ".join(_missing_storage)}.'
+    )
+if _storage_configured and _missing_storage:
+    raise ValueError(
+        'Object storage configuration is incomplete. '
+        f'Set all of: {", ".join(_storage_env_names)}.'
+    )
+
+if not _missing_storage:
     INSTALLED_APPS.append('storages')
     STORAGES = {
         "default": {
@@ -217,12 +309,13 @@ if os.environ.get('AWS_ACCESS_KEY_ID'):
             "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
         },
     }
-    AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID')
-    AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY')
-    AWS_STORAGE_BUCKET_NAME = 'media'
-    AWS_S3_ENDPOINT_URL = os.environ.get('AWS_ENDPOINT_URL_S3')
-    AWS_S3_REGION_NAME = os.environ.get('AWS_REGION')
+    AWS_ACCESS_KEY_ID = _storage_env['AWS_ACCESS_KEY_ID']
+    AWS_SECRET_ACCESS_KEY = _storage_env['AWS_SECRET_ACCESS_KEY']
+    AWS_STORAGE_BUCKET_NAME = _storage_env['AWS_STORAGE_BUCKET_NAME']
+    AWS_S3_ENDPOINT_URL = _storage_env['AWS_ENDPOINT_URL_S3']
+    AWS_S3_REGION_NAME = _storage_env['AWS_REGION']
     AWS_S3_ADDRESSING_STYLE = 'path'
+    AWS_S3_SIGNATURE_VERSION = 's3v4'
     AWS_S3_FILE_OVERWRITE = False
-    AWS_QUERYSTRING_AUTH = False
-    AWS_DEFAULT_ACL = 'public-read'
+    AWS_QUERYSTRING_AUTH = _env_bool('AWS_QUERYSTRING_AUTH', default=False)
+    AWS_DEFAULT_ACL = os.environ.get('AWS_DEFAULT_ACL', 'public-read').strip()

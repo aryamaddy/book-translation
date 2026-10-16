@@ -96,6 +96,11 @@
         transform: rotate(90deg);
     }
 
+    .auth-panel :where(a, button, input, [tabindex]):focus-visible {
+        outline: 3px solid currentColor;
+        outline-offset: 4px;
+    }
+
     .auth-content {
         padding: 0 40px 40px 40px;
         flex-grow: 1;
@@ -158,6 +163,11 @@
 
     .auth-input:focus {
         border-bottom: 4px solid #111111;
+    }
+
+    .auth-input:focus-visible {
+        outline: 3px solid currentColor;
+        outline-offset: 4px;
     }
     
     body.dark-mode .auth-input:focus {
@@ -306,16 +316,37 @@
         background: #f2f2f2;
         color: #111111;
     }
+
+    .auth-local-note {
+        margin: 0 0 18px;
+        color: #555;
+        font-family: 'Satoshi', sans-serif;
+        font-size: 14px;
+        line-height: 1.5;
+    }
+
+    body.dark-mode .auth-local-note {
+        color: #aaa;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after {
+            animation-duration: 0.01ms !important;
+            animation-iteration-count: 1 !important;
+            scroll-behavior: auto !important;
+            transition-duration: 0.01ms !important;
+        }
+    }
 </style>
 
 <div class="auth-overlay" id="authOverlay"></div>
-<div class="auth-panel" id="authPanel">
+<div class="auth-panel" id="authPanel" role="dialog" aria-modal="true" aria-labelledby="authTitle" aria-hidden="true">
     <div class="auth-header">
         <div>
             <h2 class="auth-title" id="authTitle">Join Anuvad</h2>
             <p class="auth-subtitle" id="authSubtitle">Create an account to save your library.</p>
         </div>
-        <button class="auth-close" id="authClose" aria-label="Close">
+        <button class="auth-close" id="authClose" type="button" aria-label="Close sign-in panel">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter">
                 <line x1="18" y1="6" x2="6" y2="18"></line>
                 <line x1="6" y1="6" x2="18" y2="18"></line>
@@ -351,19 +382,7 @@
         </form>
         <div class="social-divider">OR</div>
         {% else %}
-        <div style="background: rgba(66, 133, 244, 0.08); border: 1px dashed rgba(66, 133, 244, 0.35); border-radius: 8px; padding: 12px 14px; margin-bottom: 18px; text-align: left;">
-            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px; font-weight: 700; font-size: 13px; color: #1a73e8;">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <circle cx="12" cy="12" r="10"></circle>
-                    <line x1="12" y1="8" x2="12" y2="12"></line>
-                    <line x1="12" y1="16" x2="12.01" y2="16"></line>
-                </svg>
-                Sign in with Username & Password
-            </div>
-            <p style="margin: 0; font-size: 12px; line-height: 1.4; color: #666;">
-                Google OAuth is not configured yet (add <code>GOOGLE_CLIENT_ID</code> to enable). You can register or log in directly below:
-            </p>
-        </div>
+        <p class="auth-local-note">Use your Anuvad username and password to continue.</p>
         {% endif %}
 
         <!-- Register Form -->
@@ -439,6 +458,7 @@
         const teaseMsg = document.getElementById('authTeaseMsg');
 
         let isLogin = false; // Default state
+        let lastFocusedElement = null;
 
         // Initialize state based on server auth_action (if any)
         const serverAuthAction = "{{ auth_action|default:'register' }}";
@@ -494,14 +514,17 @@
         });
 
         function openAuthPanel(customMessage = null) {
+            lastFocusedElement = document.activeElement;
             overlay.classList.add('active');
             panel.classList.add('active');
+            panel.setAttribute('aria-hidden', 'false');
             if (customMessage) {
                 teaseMsg.style.display = 'block';
                 teaseMsg.textContent = customMessage;
             } else {
                 teaseMsg.style.display = 'none';
             }
+            closeBtn.focus();
         }
 
         function closeAuthPanel() {
@@ -510,10 +533,15 @@
             
             overlay.classList.remove('active');
             panel.classList.remove('active');
+            panel.setAttribute('aria-hidden', 'true');
             
             const readerContainer = document.querySelector('.reader-container');
             if (readerContainer) {
                 readerContainer.style.filter = 'none';
+            }
+
+            if (lastFocusedElement && typeof lastFocusedElement.focus === 'function') {
+                lastFocusedElement.focus();
             }
         }
 

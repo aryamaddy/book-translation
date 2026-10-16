@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Anuvad.ai — Read English PDFs in Hindi & Hinglish</title>
-    <meta name="description" content="Upload any English PDF book and read it side-by-side in natural Hindi or Hinglish. Pixel-perfect layout preservation. On-demand lazy translation.">
+    <meta name="description" content="Sign in to upload an English PDF book and read it side-by-side in natural Hindi or Hinglish. Pixel-perfect layout preservation. On-demand lazy translation.">
 
     <!-- Fonts: Clash Display + Satoshi from Fontshare, Playfair Display for serif italic -->
     <link href="https://api.fontshare.com/v2/css?f[]=clash-display@700&f[]=satoshi@500,700&display=swap" rel="stylesheet">
@@ -79,6 +79,10 @@
 
         a { text-decoration: none; color: inherit; }
         img { max-width: 100%; display: block; }
+        :where(a, button, input, [tabindex]):focus-visible {
+            outline: 3px solid var(--fg);
+            outline-offset: 4px;
+        }
 
         /* ══════════════════════════════════════════════════
            UTILITY
@@ -204,8 +208,19 @@
         }
 
         /* Mobile hamburger */
-        .nav-hamburger { display: none; background: none; border: none; cursor: pointer; padding: 8px; }
+        .nav-hamburger {
+            display: none;
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 8px;
+        }
         .nav-hamburger span { display: block; width: 24px; height: 2px; background: var(--fg); margin: 5px 0; transition: all 300ms ease; }
+        .nav-hamburger[aria-expanded="true"] span:first-child { transform: translateY(7px) rotate(45deg); }
+        .nav-hamburger[aria-expanded="true"] span:nth-child(2) { opacity: 0; }
+        .nav-hamburger[aria-expanded="true"] span:last-child { transform: translateY(-7px) rotate(-45deg); }
+
+        .mobile-nav-menu { display: none; }
 
         /* ══════════════════════════════════════════════════
            B. HERO SECTION
@@ -718,6 +733,39 @@
             .nav-links { display: none; }
             .lang-toggle { display: none; }
             .nav-hamburger { display: block; }
+            .nav-right > .btn-pill { display: none; }
+
+            .mobile-nav-menu {
+                position: absolute;
+                top: calc(100% + 1px);
+                left: 0;
+                right: 0;
+                padding: 20px;
+                background: var(--bg);
+                border-bottom: 1px solid rgba(30, 30, 30, 0.12);
+                box-shadow: 0 18px 30px rgba(0, 0, 0, 0.08);
+            }
+            .mobile-nav-menu:not([hidden]) { display: block; }
+            .mobile-nav-menu ul { display: grid; gap: 4px; list-style: none; }
+            .mobile-nav-menu a {
+                display: block;
+                padding: 14px 8px;
+                font-size: 14px;
+                text-transform: uppercase;
+                letter-spacing: 0.08em;
+                color: var(--gray-1);
+            }
+            .mobile-nav-menu a:hover { color: var(--fg); }
+            .mobile-nav-menu a.btn-pill {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+            .mobile-nav-menu a.btn-pill-filled { color: var(--bg); }
+            .mobile-nav-menu .mobile-nav-cta {
+                margin-top: 12px;
+                width: 100%;
+            }
 
             .features-grid { grid-template-columns: 1fr; gap: 56px; }
 
@@ -737,6 +785,21 @@
         @media (max-width: 480px) {
             .footer-grid { grid-template-columns: 1fr; }
             .library-grid { grid-template-columns: 1fr; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            html { scroll-behavior: auto; }
+            *, *::before, *::after {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                scroll-behavior: auto !important;
+                transition-duration: 0.01ms !important;
+            }
+            .reveal,
+            .reveal.visible { opacity: 1; transform: none; }
+            .showcase-card:hover,
+            .upload-zone:hover,
+            .upload-zone.drag-over { transform: none; }
         }
     </style>
 </head>
@@ -764,16 +827,30 @@
                 <li><a href="#" onclick="openAuthPanel('CREATE ACCOUNT'); return false;">Register</a></li>
                 {% endif %}
             </ul>
-            <a href="#upload-section" class="btn-pill">Start Reading</a>
-            <button id="btn-theme" title="Toggle Dark Mode" style="margin-left:16px; border-radius:50%; width:38px; height:38px; display:flex; align-items:center; justify-content:center; border:1px solid var(--border-dark); background:transparent; color:var(--fg); cursor:pointer;">
+            <a href="#upload-section" class="btn-pill" onclick="openAuthPanel('SIGN IN TO START READING'); return false;">Sign in to start reading</a>
+            <button id="btn-theme" type="button" title="Toggle Dark Mode" aria-label="Toggle dark mode" style="margin-left:16px; border-radius:50%; width:38px; height:38px; display:flex; align-items:center; justify-content:center; border:1px solid var(--border-dark); background:transparent; color:var(--fg); cursor:pointer;">
                 <svg id="icon-sun" style="display:none;" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
                 <svg id="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
             </button>
         </div>
 
-        <button class="nav-hamburger" id="hamburger" aria-label="Menu">
+        <button class="nav-hamburger" id="hamburger" type="button" aria-label="Open navigation menu" aria-controls="mobileNavMenu" aria-expanded="false">
             <span></span><span></span><span></span>
         </button>
+
+        <div class="mobile-nav-menu" id="mobileNavMenu" role="navigation" hidden aria-label="Mobile navigation">
+            <ul>
+                <li><a href="#features">Features</a></li>
+                <li><a href="#how-it-works">How it Works</a></li>
+                {% if request.user.is_authenticated %}
+                <li><a href="{% url 'logout_user' %}">Logout</a></li>
+                {% else %}
+                <li><a href="#" onclick="openAuthPanel('LOG IN'); return false;">Login</a></li>
+                <li><a href="#" onclick="openAuthPanel('CREATE ACCOUNT'); return false;">Register</a></li>
+                {% endif %}
+                <li><a href="#upload-section" class="btn-pill btn-pill-filled mobile-nav-cta" onclick="openAuthPanel('SIGN IN TO START READING'); return false;">Sign in to start reading</a></li>
+            </ul>
+        </div>
     </nav>
 
     <!-- ═══════════════════════════════════════════════════
@@ -797,12 +874,12 @@
 
         <!-- Upload Zone -->
         <div class="upload-zone reveal" id="upload-section">
-            <div class="upload-zone-title">Drop your PDF here</div>
-            <div class="upload-zone-sub">or select a file to begin translation</div>
+            <div class="upload-zone-title">Sign in to upload your book</div>
+            <div class="upload-zone-sub">Create an account or log in to translate and read a PDF.</div>
 
             <div style="margin-top: 24px; text-align: center;">
-                <button onclick="openAuthPanel('LOG IN TO UPLOAD BOOKS');" class="btn-pill btn-pill-filled" style="width: 100%; padding: 18px; font-size: 18px; letter-spacing: 0.05em;">
-                    SIGN IN TO UPLOAD
+                <button onclick="openAuthPanel('SIGN IN TO START READING');" class="btn-pill btn-pill-filled" style="width: 100%; padding: 18px; font-size: 18px; letter-spacing: 0.05em;">
+                    SIGN IN TO START READING
                 </button>
             </div>
         </div>
@@ -986,6 +1063,42 @@
             }
         });
 
+        // ─── Mobile Navigation ────────────────────────────
+        const siteNav = document.querySelector('.site-nav');
+        const hamburger = document.getElementById('hamburger');
+        const mobileNavMenu = document.getElementById('mobileNavMenu');
+
+        function setMobileNav(open) {
+            mobileNavMenu.hidden = !open;
+            hamburger.setAttribute('aria-expanded', String(open));
+            hamburger.setAttribute('aria-label', open ? 'Close navigation menu' : 'Open navigation menu');
+            if (open) {
+                const firstLink = mobileNavMenu.querySelector('a');
+                if (firstLink) firstLink.focus();
+            }
+        }
+
+        hamburger.addEventListener('click', () => {
+            setMobileNav(mobileNavMenu.hidden);
+        });
+
+        mobileNavMenu.querySelectorAll('a').forEach(link => {
+            link.addEventListener('click', () => setMobileNav(false));
+        });
+
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape' && !mobileNavMenu.hidden) {
+                setMobileNav(false);
+                hamburger.focus();
+            }
+        });
+
+        document.addEventListener('click', (event) => {
+            if (!mobileNavMenu.hidden && !siteNav.contains(event.target)) {
+                setMobileNav(false);
+            }
+        });
+
         // ─── Language Toggle ─────────────────────────────
         const btnHindi = document.getElementById('btnHindi');
         const btnHinglish = document.getElementById('btnHinglish');
@@ -1025,33 +1138,6 @@
 
         revealElements.forEach(el => revealObserver.observe(el));
 
-        // ─── Upload Zone Drag & Drop Visual Feedback ─────
-        const uploadZone = document.querySelector('.upload-zone');
-        if (uploadZone) {
-            ['dragenter', 'dragover'].forEach(evt => {
-                uploadZone.addEventListener(evt, (e) => {
-                    e.preventDefault();
-                    uploadZone.classList.add('drag-over');
-                });
-            });
-            ['dragleave', 'drop'].forEach(evt => {
-                uploadZone.addEventListener(evt, (e) => {
-                    e.preventDefault();
-                    uploadZone.classList.remove('drag-over');
-                });
-            });
-            // Handle actual file drop → set it on the file input
-            uploadZone.addEventListener('drop', (e) => {
-                e.preventDefault();
-                const fileInput = uploadZone.querySelector('input[type="file"]');
-                if (fileInput && e.dataTransfer.files.length > 0) {
-                    fileInput.files = e.dataTransfer.files;
-                    // Visual confirmation
-                    uploadZone.querySelector('.upload-zone-title').textContent = e.dataTransfer.files[0].name;
-                    uploadZone.querySelector('.upload-zone-sub').textContent = 'File ready — click "Upload & Read" to begin.';
-                }
-            });
-        }
     </script>
 
     {% include 'reader/auth_panel.html' %}
