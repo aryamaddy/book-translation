@@ -1,221 +1,334 @@
-<div align="center">
+# Anuvad.ai (अनुवाद)
 
-# 📖 Anuvad.ai (अनुवाद)
-### *Next-Gen AI Book Translation & Interactive Split-Screen Reader*
+> Read English and Hindi books in the language that feels natural to you.
 
-[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
-[![Django](https://img.shields.io/badge/Django-5.x%20%2F%206.x-092E20?style=for-the-badge&logo=django&logoColor=white)](https://djangoproject.com)
-[![Groq](https://img.shields.io/badge/Groq-LPU%20Inference-F05A28?style=for-the-badge&logo=groq&logoColor=white)](https://groq.com)
-[![PDF.js](https://img.shields.io/badge/PDF.js-Client%20Rendering-FF0000?style=for-the-badge&logo=adobe&logoColor=white)](https://mozilla.github.io/pdf.js/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
+Anuvad.ai is an AI-assisted PDF reading application for bilingual readers. It
+keeps the original PDF visible in a split-screen reader and generates readable
+Hindi, Hinglish, or English text page by page.
 
-<p align="center">
-  <b>Read text-based English or Hindi PDFs side-by-side with context-aware AI translations in Hindi, conversational Hinglish, or English — while keeping the original document visible.</b>
-</p>
+**Live app:** [anuvad-alpha.vercel.app](https://anuvad-alpha.vercel.app/)
 
-</div>
+## Why Anuvad.ai?
 
----
+Long books are difficult to read when the language creates friction. Anuvad.ai
+helps readers keep the original document in view while using contextual AI
+translation for the active page.
 
-## 🌟 Why Anuvad.ai?
+The product is designed for:
 
-For millions of bilingual readers, diving into English or classical literature comes with constant linguistic friction. Traditional translation tools strip away formatting, destroy typography, and translate line-by-line out of context.
+- bilingual readers who prefer Hindi or Hinglish;
+- students and self-learners reading English reference material;
+- readers of literature who want to preserve the original text;
+- anyone who wants to build vocabulary while reading.
 
-**Anuvad.ai** provides an intelligent, split-screen reading experience:
-- **Left Pane:** Pixel-perfect original PDF rendered in real-time via `PDF.js`.
-- **Right Pane:** Natural, context-rich translation with instant switching between **Pure Hindi (हिंदी)**, **Conversational Hinglish**, and **English**.
+## Features
 
----
+- **Split-screen reader** — original PDF on one side and translated text on the other.
+- **Hindi, Hinglish, and English modes** — switch translation style while reading.
+- **Page-by-page translation** — translate only the page the reader opens.
+- **Source-aware caching** — reuse a cached translation only when the source page text is unchanged.
+- **AI reading tutor** — ask questions about the active page.
+- **Text-to-speech** — listen to translated text after signing in.
+- **Bookmarks and notes** — save important pages and reading notes.
+- **Reading progress** — resume books from the last saved page.
+- **Vocabulary API** — save, update, list, and delete vocabulary items with context.
+- **Tags and library dashboard** — organize books and track reading activity.
+- **Django admin** — manage books, users, translations, logs, and reading data.
+- **Light/dark mode and responsive UI** — designed for desktop and smaller screens.
 
-## ✨ Key Features
+## Important limitations
 
-| Feature | Description |
-|---|---|
-| 📑 **Split-View Reader** | Keeps the original PDF visible alongside a readable translated text pane. Complex scanned/image-only PDFs may require OCR and are not guaranteed to preserve layout. |
-| ⚡ **Contextual AI Engine** | Powered by high-throughput **Groq LPU (Llama 3 / Qwen)** for authentic Indian literary cadence and idiom preservation. |
-| 🛡️ **Race-Condition & Skip Defense** | Built with `AbortController` and monotonic request IDs — rapidly flipping through pages never causes stale or overlapping translations. |
-| 🏎️ **Translation Caching** | Revisited pages reuse a database cache when the source text is unchanged, reducing repeat provider calls. |
-| 🗣️ **Text-to-Speech (TTS)** | Listen to Hindi or English translations hands-free with the integrated web TTS player. |
-| 🤖 **Ask The Book (AI Tutor)** | In-reader AI assistant that directly answers queries about the active page's storyline, characters, and themes. |
-| 📖 **Vocabulary API** | Authenticated users can save, list, update, and delete translated vocabulary items with context. |
-| 🧘 **Zen Focus Mode** | Built-in Pomodoro timer with ambient background audio (Rain, Focus, Forest) for distraction-free reading sessions. |
-| 🔐 **Admin & User Management** | Complete Django admin dashboard for managing books, users, translation caches, and error logs. |
+Anuvad.ai is an alpha application. Please keep these limitations in mind:
 
----
+- Uploading requires an account.
+- Text-based PDFs work best.
+- Scanned or image-only PDFs may require OCR and may not translate correctly.
+- Complex tables, multi-column layouts, charts, and embedded text are not
+  guaranteed to preserve their original structure in the translation pane.
+- AI translations can contain mistakes. Verify important medical, legal,
+  academic, or technical information against the original source.
+- The active-page tutor is not a full-book research assistant yet.
+- Uploaded text may be sent to configured third-party AI, translation, or TTS
+  providers. Do not upload confidential material unless you understand the
+  provider and retention policies.
 
-## 🏗️ Architecture & Data Flow
+## How it works
 
 ```mermaid
 sequenceDiagram
-    autonumber
-    actor Reader as 👤 User
-    participant Browser as 🖥️ Reader Frontend (PDF.js)
-    participant Cache as 💾 Local Memory & DB Cache
-    participant Django as ⚙️ Django API Server
-    participant Groq as 🚀 Groq LPU (AI Engine)
+    actor Reader
+    participant Browser
+    participant Django
+    participant Database
+    participant AI as AI provider
 
-    Reader->>Browser: Opens Book / Navigates to Page
-    Browser->>Browser: Aborts previous in-flight requests (AbortController)
-    Browser->>Browser: Renders PDF Page Canvas
-    Browser->>Cache: Check Client Memory Cache
-    
-    alt Client Cache Hit
-        Cache-->>Browser: Instant Render (<1ms)
-    else Cache Miss
-        Browser->>Django: POST /api/translate-page/ (page_num, extracted_text, lang)
-        Django->>Cache: Query SQLite/PostgreSQL TranslationCache
-        alt DB Cache Hit
-            Cache-->>Django: Return cached translation
-        else DB Cache Miss
-            Django->>Groq: Generate Contextual Literary Translation
-            Groq-->>Django: Return Hindi / Hinglish Text
-            Django->>Cache: Save into TranslationCache
-        end
-        Django-->>Browser: Return JSON response with page verification
-        Browser->>Browser: Guard check: Does response match current page?
-        Browser-->>Reader: Display translated page & save to client cache
+    Reader->>Browser: Open a book and select a page
+    Browser->>Browser: Render the original PDF with PDF.js
+    Browser->>Django: Send page text, page number, and language
+    Django->>Database: Check the source-aware translation cache
+    alt Cached translation exists
+        Database-->>Django: Return cached translation
+    else Cache miss
+        Django->>AI: Generate Hindi, Hinglish, or English text
+        AI-->>Django: Return translation
+        Django->>Database: Store translation and source text
     end
+    Django-->>Browser: Return translated page text
+    Browser-->>Reader: Show the split-screen reading view
 ```
 
----
+## Technology stack
 
-## 🛠️ Technology Stack
+- **Backend:** Django, Python
+- **Frontend:** Django templates, vanilla JavaScript, CSS
+- **PDF rendering:** PDF.js
+- **Translation:** Groq with configured fallbacks
+- **Speech:** gTTS and browser audio playback
+- **Authentication:** Django Auth and optional django-allauth Google OAuth
+- **Development database:** SQLite
+- **Production database:** PostgreSQL-compatible database such as Neon
+- **Production file storage:** S3-compatible object storage
+- **Deployment:** Vercel Python runtime
 
-- **Backend Framework:** Django 5.x / 6.x (Python 3.11+)
-- **AI / LLM Acceleration:** Groq API (High-speed LPU inference with `allam-2-7b` / `qwen` fallbacks)
-- **Frontend & Rendering:** Vanilla JavaScript (ES6+), PDF.js, Modern Brutalist Glassmorphism CSS
-- **Audio & TTS Engine:** Web Speech API & Google Text-to-Speech integration
-- **Database:** SQLite (default for development) / PostgreSQL (production-ready)
-- **Authentication:** Django Auth & Django-Allauth (Google OAuth support)
+## Project structure
 
----
+```text
+book-translation/
+├── config/                  # Django project settings, URLs, WSGI/ASGI
+├── reader/                  # Main application, models, views, APIs, tests
+├── templates/reader/        # Landing page, dashboard, reader, auth UI
+├── static/                  # Static asset directory
+├── manage.py
+├── requirements.txt
+├── vercel.json
+└── README.md
+```
 
-## 🚀 Quickstart Guide
+## Run locally
 
-### 1. Clone the Repository
+### 1. Clone the project
+
 ```bash
 git clone https://github.com/aryamaddy/book-translation.git
 cd book-translation
 ```
 
-### 2. Set Up Virtual Environment
-```bash
-# Windows
-python -m venv .venv
-.\.venv\Scripts\activate
+### 2. Create and activate a virtual environment
 
-# Linux / macOS
+**Windows PowerShell:**
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+**Windows CMD:**
+
+```bat
+python -m venv .venv
+.venv\Scripts\activate
+```
+
+**macOS/Linux:**
+
+```bash
 python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-### 3. Install Dependencies
+### 3. Install dependencies
+
 ```bash
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
-### 4. Configure Environment Variables
-Create a `.env` file in the project root:
-```env
-# Required for AI Translation
-GROQ_API_KEY=gsk_your_groq_api_key_here
+### 4. Configure local environment
 
-# Django Settings (Set DEBUG explicitly for local development)
+Create a `.env` file in the project root. Never commit this file.
+
+```env
+# Explicitly enable local development mode
 DEBUG=True
-SECRET_KEY=your_secret_key_here
+SECRET_KEY=replace-with-a-local-development-secret
 ALLOWED_HOSTS=127.0.0.1,localhost
 CSRF_TRUSTED_ORIGINS=http://127.0.0.1:8000,http://localhost:8000
 
-# Database (Optional for local development; required on Vercel)
-# DATABASE_URL=postgresql://user:password@localhost:5432/bookdb
+# Required for the primary AI translation path
+GROQ_API_KEY=gsk_your_key_here
+# Optional: override the default model
+# GROQ_MODEL=your-model-id
+
+# Optional local database override
+# DATABASE_URL=postgresql://user:password@localhost:5432/anuvad
+
+# Optional Google OAuth
+# GOOGLE_CLIENT_ID=...
+# GOOGLE_CLIENT_SECRET=...
 ```
 
-`DEBUG` defaults to `False`. The local SQLite database and `media/` upload
-directory are available when `DEBUG=True` is set explicitly. When `DEBUG=False`,
-set `SECRET_KEY`; the application will fail at startup rather than use a
-development key.
+`DEBUG` defaults to `False`. Local SQLite and the local `media/` directory are
+available only when `DEBUG=True` is explicitly set. Production must provide a
+real `SECRET_KEY`.
 
-### 5. Apply Database Migrations
+### 5. Prepare the database
+
 ```bash
 python manage.py migrate
-```
-
-### 6. Create an Admin User (Optional)
-```bash
 python manage.py createsuperuser
 ```
 
-### 7. Run the Application
+### 6. Start the development server
+
 ```bash
 python manage.py runserver
 ```
 
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000) in your web browser.
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000).
 
-### Vercel deployment
+## Production deployment on Vercel
 
-Vercel's function filesystem is ephemeral, so this project does not fall back
-to SQLite or `/tmp` for deployed data. If `VERCEL` is enabled, startup fails
-with a clear error unless both a persistent database and complete S3-compatible
-object-storage configuration are present.
+Vercel function storage is ephemeral. Do **not** use SQLite or `/tmp` for
+production data. The application intentionally fails during startup when a
+Vercel deployment is missing a persistent database or complete object-storage
+configuration.
 
-Set these Vercel environment variables (Neon Object Storage uses these AWS
-standard names):
+Set these Vercel environment variables:
 
 ```env
 VERCEL=1
 DEBUG=False
-SECRET_KEY=replace_with_a_long_random_value
+SECRET_KEY=replace-with-a-long-random-production-secret
 ALLOWED_HOSTS=.vercel.app,your-domain.example
 CSRF_TRUSTED_ORIGINS=https://*.vercel.app,https://your-domain.example
+
 DATABASE_URL=postgresql://user:password@host/database
 
 AWS_ACCESS_KEY_ID=...
 AWS_SECRET_ACCESS_KEY=...
 AWS_ENDPOINT_URL_S3=https://...
-AWS_REGION=us-east-2
+AWS_REGION=...
 AWS_STORAGE_BUCKET_NAME=media
+
+GROQ_API_KEY=gsk_your_key_here
 ```
 
-Provision the `media` bucket (see `neon.ts`) before deploying. The required
-storage variables keep uploaded PDFs out of the ephemeral Vercel filesystem.
-For a proxy with different HTTPS behavior, `SECURE_SSL_REDIRECT`,
-`SESSION_COOKIE_SECURE`, `CSRF_COOKIE_SECURE`,
-`SECURE_PROXY_SSL_HEADER_ENABLED`, `SECURE_HSTS_SECONDS`, and the other
-`SECURE_*` settings can be overridden with environment variables.
+The storage variables are the standard names used by `django-storages` for an
+S3-compatible provider. Provision the bucket before deploying and configure
+its access policy deliberately. Private PDFs should be served through an
+appropriate signed/private-storage strategy rather than exposed publicly.
 
----
+Optional security settings include:
 
-## 📡 API Endpoints Overview
+```env
+SECURE_SSL_REDIRECT=True
+SESSION_COOKIE_SECURE=True
+CSRF_COOKIE_SECURE=True
+SECURE_HSTS_SECONDS=31536000
+SECURE_PROXY_SSL_HEADER_ENABLED=True
+```
 
-| Method | Endpoint | Description |
+## API overview
+
+All reader APIs are authenticated unless noted otherwise. Requests that change
+data require the normal Django CSRF protection when called from the browser.
+
+| Method | Endpoint | Purpose |
 |---|---|---|
-| `POST` | `/api/translate-page/` | Translates page text to Hindi, Hinglish, or English with caching |
-| `POST` | `/api/tts/` | Authenticated users can generate audio for translated text |
-| `POST` | `/api/ask-book/` | Context-aware AI tutor chat for the current page |
-| `POST` | `/api/bookmark/` | Saves or toggles bookmark for the active page |
-| `POST` | `/api/progress/` | Updates user reading percentage and resume state |
-| `GET/POST/DELETE` | `/api/vocabulary/` | Lists, saves, updates, or deletes the current user's vocabulary |
-| `GET` | `/admin/` | Superuser administration portal for books, users, and logs |
+| `POST` | `/api/translate-page/` | Translate the active page into Hindi, Hinglish, or English |
+| `POST` | `/api/tts/` | Generate audio for translated text |
+| `POST` | `/api/ask-book/` | Ask a question about the active page |
+| `POST` | `/api/progress/` | Save reading progress |
+| `POST` | `/api/bookmark/` | Add, update, or remove a bookmark |
+| `GET` | `/api/bookmarks/<book_id>/` | List bookmarks for a book |
+| `POST` | `/api/note/` | Save a note on a bookmarked page |
+| `POST` | `/api/tags/` | Create, delete, assign, or remove tags |
+| `GET` | `/api/vocabulary/` | List the current user's vocabulary |
+| `POST` | `/api/vocabulary/` | Save or update a vocabulary item |
+| `DELETE` | `/api/vocabulary/` | Delete a vocabulary item owned by the user |
 
----
+## Testing and checks
 
-## 🧪 Running the Test Suite
+Run Django's system checks:
 
-Run the end-to-end automated verification suite:
+**macOS/Linux/Git Bash:**
+
+```bash
+DEBUG=True SECRET_KEY=test python manage.py check
+```
+
+**Windows PowerShell:**
+
+```powershell
+$env:DEBUG = "True"
+$env:SECRET_KEY = "test"
+python manage.py check
+```
+
+Run the application tests:
+
+**macOS/Linux/Git Bash:**
+
+```bash
+DEBUG=True SECRET_KEY=test python manage.py test reader
+```
+
+**Windows PowerShell:**
+
+```powershell
+$env:DEBUG = "True"
+$env:SECRET_KEY = "test"
+python manage.py test reader
+```
+
+Run the existing end-to-end script when its browser and provider prerequisites
+are available:
+
 ```bash
 python test_e2e.py
 ```
-This tests user creation, authentication, PDF upload, reader rendering, Hindi and Hinglish AI translation, and conversational book queries.
 
----
+Before deploying, also verify:
 
-## 🛡️ License
+- production environment variables are configured;
+- database migrations run successfully;
+- object storage can upload and retrieve a PDF;
+- Google OAuth is either configured or intentionally disabled;
+- AI provider quotas and fallback behavior are understood;
+- uploaded material complies with copyright and privacy requirements.
+
+## Security notes
+
+- Keep `.env`, API keys, OAuth secrets, and storage credentials out of Git.
+- Use a strong, unique production `SECRET_KEY`.
+- Use PostgreSQL and persistent object storage in production.
+- Restrict PDF access to the owning user and review object-storage permissions.
+- Treat uploaded PDF text as untrusted input.
+- Add provider-specific privacy and retention information before public launch.
+- Do not rely on AI output for medical, legal, financial, or safety-critical decisions.
+
+## Roadmap
+
+- OCR support for scanned PDFs
+- Better table and multi-column layout handling
+- Full-book search and retrieval-augmented Q&A
+- Vocabulary UI with revision and flashcards
+- Password reset and email verification
+- Signed private PDF URLs
+- Background translation jobs and progress tracking
+- Translation quality evaluation and user feedback tools
+
+## Contributing
+
+1. Fork the repository.
+2. Create a focused branch.
+3. Make a small, tested change.
+4. Run `manage.py check` and the relevant tests.
+5. Open a pull request with the behavior change and verification details.
+
+## License
 
 This project is licensed under the [MIT License](LICENSE).
 
 ---
 
-<div align="center">
-  <b>Developed & Maintained with ❤️ by <a href="https://github.com/aryamaddy">aryamaddy</a></b>
-</div>
+Built with ❤️ for readers who learn across languages.
