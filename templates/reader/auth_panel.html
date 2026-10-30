@@ -457,6 +457,33 @@
         const toggleBtn = document.getElementById('authToggleBtn');
         const teaseMsg = document.getElementById('authTeaseMsg');
 
+        function getCookie(name) {
+            const prefix = name + '=';
+            const cookie = document.cookie
+                .split(';')
+                .map(value => value.trim())
+                .find(value => value.startsWith(prefix));
+            return cookie ? decodeURIComponent(cookie.slice(prefix.length)) : '';
+        }
+
+        // A CSRF cookie can rotate after login in another tab. Keep every auth
+        // form aligned with the latest cookie, including pages restored by the
+        // browser's back/forward cache.
+        function refreshAuthCsrfTokens() {
+            const cookieToken = getCookie('csrftoken');
+            if (!cookieToken) return;
+
+            panel.querySelectorAll('form input[name="csrfmiddlewaretoken"]').forEach(input => {
+                input.value = cookieToken;
+            });
+        }
+
+        panel.querySelectorAll('form').forEach(form => {
+            form.addEventListener('submit', refreshAuthCsrfTokens);
+        });
+        window.addEventListener('pageshow', refreshAuthCsrfTokens);
+        refreshAuthCsrfTokens();
+
         let isLogin = false; // Default state
         let lastFocusedElement = null;
 

@@ -2,10 +2,61 @@ import json
 
 from django.contrib.auth.models import User
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase
+from django.test import Client, TestCase
 from django.urls import reverse
 
 from .models import Book, Vocabulary
+
+
+class AuthCsrfTests(TestCase):
+    def setUp(self):
+        self.client = Client(enforce_csrf_checks=True)
+
+    def test_landing_sets_fresh_csrf_cookie_and_disables_caching(self):
+        response = self.client.get(reverse('landing_page'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('csrftoken', response.cookies)
+        cache_control = response.headers.get('Cache-Control', '')
+        self.assertIn('no-store', cache_control)
+        self.assertIn('private', cache_control)
+
+    def test_registration_accepts_token_from_current_cookie(self):
+        self.client.get(reverse('landing_page'))
+        token = self.client.cookies['csrftoken'].value
+
+        response = self.client.post(reverse('register_user'), data={
+            'csrfmiddlewaretoken': token,
+            'username': 'csrf-reader',
+            'email': 'csrf-reader@example.com',
+            'password': 'safe-password-123',
+            'confirm_password': 'safe-password-123',
+            'next': reverse('dashboard'),
+        })
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(User.objects.filter(username='csrf-reader').exists())
+
+    def test_stale_token_uses_safe_failure_page(self):
+        self.client.get(reverse('landing_page'))
+        stale_token = self.client.cookies['csrftoken'].value
+        self.client.cookies['csrftoken'] = 'a' * 32
+
+        response = self.client.post(reverse('register_user'), data={
+            'csrfmiddlewaretoken': stale_token,
+            'username': 'stale-reader',
+            'email': 'stale-reader@example.com',
+            'password': 'safe-password-123',
+            'confirm_password': 'safe-password-123',
+        })
+
+        self.assertEqual(response.status_code, 403)
+        self.assertContains(
+            response,
+            'Your security token expired. Please submit the form again.',
+            status_code=403,
+        )
+        self.assertNotContains(response, 'CSRF verification failed', status_code=403)
 
 
 class ReaderApiTests(TestCase):

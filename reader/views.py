@@ -12,6 +12,8 @@ from deep_translator import GoogleTranslator
 from django.conf import settings
 from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
+from django.views.decorators.cache import never_cache
+from django.views.decorators.csrf import ensure_csrf_cookie, requires_csrf_token
 from .models import Book, TranslationCache, Vocabulary, UserProfile, ErrorLog, ReadingProgress, Bookmark, BookTag, BookTagAssignment
 from .forms import BookForm, UserProfileForm, RegisterForm, PageTranslationForm, AskBookForm, TTSForm
 from django_ratelimit.decorators import ratelimit
@@ -48,6 +50,8 @@ if GROQ_AVAILABLE:
     from groq import Groq
 
 
+@never_cache
+@ensure_csrf_cookie
 def landing_page(request):
     if request.user.is_authenticated:
         return redirect('dashboard')
@@ -237,6 +241,8 @@ def delete_book(request, book_id):
             ErrorLog.objects.create(action="Delete Book Error", error_message=str(e) + "\n" + traceback.format_exc(), user_info=request.user.username)
     return redirect('dashboard')
 
+@never_cache
+@ensure_csrf_cookie
 @ratelimit(key='ip', rate=os.environ.get('RATE_LIMIT_AUTH_IP', '5/m'), block=False)
 @ratelimit(key='post:username', rate=os.environ.get('RATE_LIMIT_AUTH_ACCOUNT', '10/h'), block=False)
 def register_user(request):
@@ -259,6 +265,8 @@ def register_user(request):
             return render(request, 'reader/landing.html', {'auth_error': errors, 'auth_action': 'register'})
     return redirect('landing_page')
 
+@never_cache
+@ensure_csrf_cookie
 @ratelimit(key='ip', rate=os.environ.get('RATE_LIMIT_AUTH_IP', '5/m'), block=False)
 @ratelimit(key='post:username', rate=os.environ.get('RATE_LIMIT_AUTH_ACCOUNT', '10/h'), block=False)
 def login_user(request):
@@ -1030,6 +1038,8 @@ def api_vocabulary(request):
     return JsonResponse({'error': 'Invalid method'}, status=405)
 
 
+@never_cache
+@ensure_csrf_cookie
 def safe_google_login(request):
     """
     Safely handles Google OAuth login. If GOOGLE_CLIENT_ID is not configured,
@@ -1045,4 +1055,20 @@ def safe_google_login(request):
         })
     from allauth.socialaccount.providers.google.views import oauth2_login
     return oauth2_login(request)
+
+
+@never_cache
+@ensure_csrf_cookie
+@requires_csrf_token
+def csrf_failure(request, reason=""):
+    """Show a safe retry screen when an auth form contains a stale token."""
+    if request.path == reverse('register_user'):
+        auth_action = 'register'
+    else:
+        auth_action = 'login'
+
+    return render(request, 'reader/landing.html', {
+        'auth_error': 'Your security token expired. Please submit the form again.',
+        'auth_action': auth_action,
+    }, status=403)
 

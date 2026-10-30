@@ -90,6 +90,10 @@ CSRF_TRUSTED_ORIGINS = _env_list(
     ],
 )
 
+# Authentication pages carry per-browser CSRF tokens. A friendly failure view
+# replaces Django's technical error page and gives the browser a fresh token.
+CSRF_FAILURE_VIEW = 'reader.views.csrf_failure'
+
 # Forwarded HTTPS and cookie/redirect behavior are configurable for the
 # hosting proxy in front of Django. Secure defaults apply whenever DEBUG is
 # disabled, while local development remains HTTP-friendly.
